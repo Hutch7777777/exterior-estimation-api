@@ -4,6 +4,20 @@
  */
 
 // ============================================================================
+// MATERIAL ASSIGNMENT (for ID-based pricing lookup)
+// ============================================================================
+
+export interface MaterialAssignment {
+  detection_id: string;
+  detection_class: string;
+  pricing_item_id: string;  // UUID from pricing_items.id
+  quantity: number;
+  unit: 'SF' | 'LF' | 'EA';
+  area_sf?: number | null;
+  perimeter_lf?: number | null;
+}
+
+// ============================================================================
 // WEBHOOK REQUEST (from n8n)
 // ============================================================================
 
@@ -81,8 +95,14 @@ export interface WebhookRequest {
   // Trade-specific config
   siding?: WebhookSidingConfig;
 
-  // Measurements (from HOVER extraction)
-  measurements: WebhookMeasurements;
+  // Measurements (from HOVER extraction) - optional if using material_assignments
+  measurements?: WebhookMeasurements;
+
+  // NEW: Material assignments from frontend (ID-based pricing)
+  material_assignments?: MaterialAssignment[];
+
+  // NEW: Organization context for multi-tenant pricing
+  organization_id?: string;
 
   // Options
   include_pricing?: boolean;

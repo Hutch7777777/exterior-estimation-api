@@ -18,11 +18,13 @@ import {
 
 /**
  * Transform webhook request to internal CalculationRequest format
+ * Note: Only called from SKU-based path where measurements are guaranteed
  */
 export function transformWebhookToCalculationRequest(
   webhook: WebhookRequest
 ): CalculationRequest {
-  const m = webhook.measurements;
+  // Measurements are validated before calling this function in SKU-based path
+  const m = webhook.measurements!;
   const config = webhook.siding || {};
 
   // Calculate gross area if not provided
