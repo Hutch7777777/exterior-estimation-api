@@ -171,11 +171,11 @@ export function calculateWindowHeadFlashing(
 
   return {
     id: uuidv4(),
-    sku: 'FLASH-HEAD-1.125-10',
+    sku: 'JH-FLEX-FLASHING-6X100',
     description: 'Window Head Flashing',
     quantity: piecesWithWaste,
     unit: 'PC',
-    size: '1-1/8" x 10\'',
+    size: '6" x 100\'',
     category: 'flashing',
     presentation_group: 'flashing',
     source: 'auto-scope',
@@ -223,11 +223,11 @@ export function calculateDoorHeadFlashing(
 
   return {
     id: uuidv4(),
-    sku: 'FLASH-HEAD-1.125-10',
+    sku: 'JH-FLEX-FLASHING-6X100',
     description: 'Door Head Flashing',
     quantity: piecesWithWaste,
     unit: 'PC',
-    size: '1-1/8" x 10\'',
+    size: '6" x 100\'',
     category: 'flashing',
     presentation_group: 'flashing',
     source: 'auto-scope',

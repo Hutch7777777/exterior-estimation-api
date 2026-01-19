@@ -44,9 +44,14 @@ export function calculateLapSiding(
   const description = config.product_name ||
     `HardiePlank ${revealInches}" ${profile.charAt(0).toUpperCase() + profile.slice(1)} ${finish}`;
 
+  // Generate SKU based on reveal and profile (mapped to database)
+  const profileCode = profile === 'cedarmill' ? 'CM' : 'SM';
+  const finishCode = config.finish === 'colorplus' ? 'CP-' : '';
+  const generatedSku = `JH-LAP-${revealInches.toString().replace('.', '')}-${profileCode}-${finishCode}12`;
+
   return {
     id: uuidv4(),
-    sku: config.product_sku || `JH-LAP-${revealInches}-${profile.toUpperCase().slice(0, 2)}-${config.finish === 'colorplus' ? 'CP' : 'PR'}`,
+    sku: config.product_sku || generatedSku,
     description,
     quantity: piecesWithWaste,
     unit: 'PC',
@@ -89,9 +94,14 @@ export function calculateLapSidingSquares(
   const description = config.product_name ||
     `James Hardie ${revealInches}" x 12' ${profile.charAt(0).toUpperCase() + profile.slice(1)} Lap Siding`;
 
+  // Generate SKU based on reveal and profile (mapped to database)
+  const profileCode = profile === 'cedarmill' ? 'CM' : 'SM';
+  const finishCode = config.finish === 'colorplus' ? 'CP-' : '';
+  const generatedSku = `JH-LAP-${revealInches.toString().replace('.', '')}-${profileCode}-${finishCode}12`;
+
   return {
     id: uuidv4(),
-    sku: config.product_sku || `JH-LAP-${revealInches}-${profile.toUpperCase().slice(0, 2)}`,
+    sku: config.product_sku || generatedSku,
     description,
     quantity: squaresWithWaste,
     unit: 'SQUARE',
@@ -144,7 +154,7 @@ export function calculateOutsideCorners(
 
   return {
     id: uuidv4(),
-    sku: finish === 'colorplus' ? 'JH-TRIM-OC-4-12-CP' : 'JH-TRIM-OC-4-12-PR',
+    sku: finish === 'colorplus' ? '111Z2BPW-CP' : '111Z2BPW',
     description: `Outside Corner - HardieTrim 5/4 x 4 x 12ft ${finishLabel}`,
     quantity: piecesWithWaste,
     unit: 'PC',
@@ -192,11 +202,11 @@ export function calculateInsideCorners(
 
   return {
     id: uuidv4(),
-    sku: 'WW-2x2x16-PR',
-    description: 'Whitewood Trim Primed 2x2x16',
+    sku: 'FRIEZE-1X8X12',
+    description: 'Frieze Board 1x8x12 (Inside Corner)',
     quantity: piecesWithWaste,
     unit: 'PC',
-    size: '2" x 2" x 16\'',
+    size: '1" x 8" x 12\'',
     category: 'trim',
     presentation_group: 'trim',
     source: 'calculated',
@@ -245,7 +255,7 @@ export function calculateGarageTrim(
 
   return {
     id: uuidv4(),
-    sku: finish === 'colorplus' ? 'JH-TRIM-GARAGE-6-12-CP' : 'JH-TRIM-GARAGE-6-12-PR',
+    sku: finish === 'colorplus' ? 'HARDIE-TRIM-54X6-12FT-CP' : 'HARDIE-TRIM-54X6-12FT',
     description: `Garage Trim - HardieTrim 5/4 x 6 x 12ft ${finishLabel}`,
     quantity: piecesWithWaste,
     unit: 'PC',
@@ -281,11 +291,11 @@ export function calculateGableTopOutBase(gableCount: number): MaterialLineItem {
 
   return {
     id: uuidv4(),
-    sku: 'WW-2x2x16-PR',
-    description: 'Whitewood Trim Primed 2x2x16',
+    sku: 'FRIEZE-1X8X12',
+    description: 'Frieze Board 1x8x12 (Gable Base)',
     quantity: piecesWithWaste,
     unit: 'PC',
-    size: '2x2x16',
+    size: '1x8x12',
     category: 'trim',
     presentation_group: 'trim',
     source: 'calculated',
@@ -316,11 +326,11 @@ export function calculateGableTopOutGable(gableCount: number): MaterialLineItem 
 
   return {
     id: uuidv4(),
-    sku: 'WW-2x2x16-PR',
-    description: 'Whitewood Trim 2x2x16 (Gable Top-Out)',
+    sku: 'FRIEZE-1X8X12',
+    description: 'Frieze Board 1x8x12 (Gable Top-Out)',
     quantity: piecesWithWaste,
     unit: 'PC',
-    size: '2x2x16',
+    size: '1x8x12',
     category: 'trim',
     presentation_group: 'trim',
     source: 'calculated',

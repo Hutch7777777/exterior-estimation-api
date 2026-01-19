@@ -186,8 +186,8 @@ describe('Siding Material Calculations', () => {
 
       // Formula: ceil((143 / 16) × 1.12) = ceil(8.9375 × 1.12) = ceil(10.01) = 11
       expect(result.quantity).toBe(11);
-      expect(result.sku).toBe('WW-2x2x16-PR');
-      expect(result.description).toContain('Whitewood');
+      expect(result.sku).toBe('FRIEZE-1X8X12');
+      expect(result.description).toContain('Frieze');
     });
 
     it('estimates from count when LF is zero', () => {

@@ -60,7 +60,7 @@ describe('Siding API Integration', () => {
       expect(outsideCorners?.quantity).toBe(4);
 
       const gableBase = result.materials.find(m =>
-        m.description === 'Whitewood Trim Primed 2x2x16'
+        m.description.includes('Gable Base')
       );
       expect(gableBase?.quantity).toBe(5);
 

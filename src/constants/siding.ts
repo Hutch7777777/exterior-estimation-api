@@ -57,41 +57,41 @@ export const COVERAGE_RATES = {
 } as const;
 
 // ============================================================================
-// TRIM SKUS
+// TRIM SKUS (mapped to database pricing_items)
 // ============================================================================
 
 export const TRIM_SKUS = {
   casing: {
-    '3.5': { colorplus: 'JH-TRIM-CASING-3.5-12-CP', primed: 'JH-TRIM-CASING-3.5-12-PR' },
-    '4': { colorplus: 'JH-TRIM-CASING-4-12-CP', primed: 'JH-TRIM-CASING-4-12-PR' },
-    '5.5': { colorplus: 'JH-TRIM-CASING-5.5-12-CP', primed: 'JH-TRIM-CASING-5.5-12-PR' },
-    '7.25': { colorplus: 'JH-TRIM-CASING-7.25-12-CP', primed: 'JH-TRIM-CASING-7.25-12-PR' }
+    '3.5': { colorplus: 'HARDIE-TRIM-54X35-12FT-CP', primed: 'HARDIE-TRIM-54X35-12FT' },
+    '4': { colorplus: 'HARDIE-TRIM-54X4-12FT-CP', primed: 'HARDIE-TRIM-54X4-12FT' },
+    '5.5': { colorplus: 'HARDIE-TRIM-54X55-12FT-CP', primed: 'HARDIE-TRIM-54X55-12FT' },
+    '7.25': { colorplus: 'HARDIE-TRIM-54X725-12FT-CP', primed: 'HARDIE-TRIM-54X725-12FT' }
   },
   garage: {
-    '4': { colorplus: 'JH-TRIM-GARAGE-4-12-CP', primed: 'JH-TRIM-GARAGE-4-12-PR' },
-    '6': { colorplus: 'JH-TRIM-GARAGE-6-12-CP', primed: 'JH-TRIM-GARAGE-6-12-PR' },
-    '8': { colorplus: 'JH-TRIM-GARAGE-8-12-CP', primed: 'JH-TRIM-GARAGE-8-12-PR' }
+    '4': { colorplus: 'HARDIE-TRIM-54X4-12FT-CP', primed: 'HARDIE-TRIM-54X4-12FT' },
+    '6': { colorplus: 'HARDIE-TRIM-54X6-12FT-CP', primed: 'HARDIE-TRIM-54X6-12FT' },
+    '8': { colorplus: 'HARDIE-TRIM-54X8-12FT-CP', primed: 'HARDIE-TRIM-54X8-12FT' }
   },
-  inside_corner: { colorplus: 'JH-TRIM-IC-4-12-CP', primed: 'JH-TRIM-IC-4-12-PR' },
-  outside_corner: { colorplus: 'JH-TRIM-OC-4-12-CP', primed: 'JH-TRIM-OC-4-12-PR' },
-  whitewood: { '2x2x16': 'WW-2x2x16-PR' }
+  inside_corner: { colorplus: '110Z2BPW-CP', primed: '110Z2BPW' },
+  outside_corner: { colorplus: '111Z2BPW-CP', primed: '111Z2BPW' },
+  whitewood: { '2x2x16': 'FRIEZE-1X8X12' }
 } as const;
 
 // ============================================================================
-// AUTO-SCOPE ITEM SKUS
+// AUTO-SCOPE ITEM SKUS (mapped to database pricing_items)
 // ============================================================================
 
 export const AUTO_SCOPE_SKUS = {
-  housewrap: 'HWRAP-9x150',
-  housewrap_tape: 'TAPE-TYVEK-3x165',
-  flashing_tape: 'TAPE-FLASH-4x75',
-  staples: 'STAPLES-A11',
-  sealant: 'SEALANT-10OZ',
-  touchup_paint: 'PAINT-TOUCHUP-QT',
-  spackle: 'SPACKLE-6OZ',
-  butyl_mastic: 'MASTIC-BUTYL',
-  hardie_blade: 'BLADE-HARDIE',
-  siding_nails: 'NAILS-SIDING-COIL'
+  housewrap: 'JH-WEATHER-BARRIER-9X100',
+  housewrap_tape: 'JH-SEAM-TAPE-2X100',
+  flashing_tape: 'JH-FLEX-FLASHING-6X100',
+  staples: 'STAPLES-A11-9/16',
+  sealant: 'CAULK-PAINT-10OZ',
+  touchup_paint: 'JH-TOUCHUP-COLORPLUS',
+  spackle: 'SPACKLE-HARDIE-6OZ',
+  butyl_mastic: 'MASTIC-BUTYL-11OZ',
+  hardie_blade: 'JH-BLADE-FIBER-CEMENT',
+  siding_nails: 'NAILS-SIDING-COIL-1.5'
 } as const;
 
 // ============================================================================
