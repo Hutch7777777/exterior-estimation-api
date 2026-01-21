@@ -6,7 +6,6 @@
 import { MaterialAssignment, WebhookMeasurements } from '../../types/webhook';
 import {
   getPricingByIds,
-  calculateTotalLabor,
   PricingItem
 } from '../../services/pricing';
 import {
@@ -14,10 +13,98 @@ import {
   buildMeasurementContext
 } from './autoscope-v2';
 import { AutoScopeLineItem } from '../../types/autoscope';
+import { getSupabaseClient, isDatabaseConfigured } from '../../services/database';
 
 // ============================================================================
 // TYPES
 // ============================================================================
+
+// Labor rate from database
+interface LaborRate {
+  id: string;
+  rate_name: string;
+  description: string;
+  trade: string;
+  presentation_group: string;
+  unit: string;
+  base_rate: string;
+  difficulty_multiplier: string;
+  min_charge: string | null;
+  notes: string;
+}
+
+// Overhead cost from database
+interface OverheadCost {
+  id: string;
+  cost_name: string;
+  description: string;
+  category: string;
+  cost_type: string;
+  unit: string | null;
+  base_rate: string | null;
+  calculation_formula: string | null;
+  default_quantity: string;
+  applies_to_trade: string[] | null;
+  required: boolean;
+  display_order: number;
+  notes: string;
+}
+
+// Labor line item for output
+interface LaborLineItem {
+  rate_id: string;
+  rate_name: string;
+  description: string;
+  quantity: number;
+  unit: string;
+  unit_cost: number;
+  total_cost: number;
+  notes?: string;
+}
+
+// Overhead line item for output
+interface OverheadLineItem {
+  cost_id: string;
+  cost_name: string;
+  description: string;
+  category: string;
+  quantity?: number;
+  unit?: string;
+  rate?: number;
+  amount: number;
+  calculation_type: string;
+  notes?: string;
+}
+
+// Project totals
+interface ProjectTotals {
+  material_cost: number;
+  material_markup_rate: number;
+  material_markup_amount: number;
+  material_total: number;
+
+  installation_labor_subtotal: number;
+  overhead_subtotal: number;
+  labor_cost_before_markup: number;
+  labor_markup_rate: number;
+  labor_markup_amount: number;
+  labor_total: number;
+
+  subtotal: number;
+  project_insurance: number;
+  grand_total: number;
+}
+
+// ============================================================================
+// MIKE SKJEI CALCULATION CONSTANTS
+// ============================================================================
+
+const MARKUP_RATE = 0.26;
+const SOC_UNEMPLOYMENT_RATE = 0.1265;
+const LI_HOURLY_RATE = 3.56;
+const INSURANCE_RATE_PER_THOUSAND = 24.38;
+const DEFAULT_CREW_SIZE = 4;
+const DEFAULT_ESTIMATED_WEEKS = 2;
 
 export interface CombinedLineItem {
   description: string;
@@ -34,6 +121,9 @@ export interface CombinedLineItem {
   labor_extended: number;
   total_extended: number;
 
+  // Labor calculation
+  squares_for_labor?: number;
+
   // Metadata
   calculation_source: 'assigned_material' | 'auto-scope';
   pricing_item_id?: string;
@@ -48,6 +138,14 @@ export interface CombinedLineItem {
 export interface V2CalculationResult {
   success: boolean;
   line_items: CombinedLineItem[];
+  labor: {
+    installation_items: LaborLineItem[];
+    installation_subtotal: number;
+  };
+  overhead: {
+    items: OverheadLineItem[];
+    subtotal: number;
+  };
   totals: {
     material_cost: number;
     labor_cost: number;
@@ -57,8 +155,10 @@ export interface V2CalculationResult {
     markup_amount: number;
     total: number;
   };
+  project_totals: ProjectTotals;
   metadata: {
     pricing_method: 'hybrid-v2';
+    calculation_method: string;
     assigned_items_count: number;
     auto_scope_items_count: number;
     items_priced: number;
@@ -68,7 +168,222 @@ export interface V2CalculationResult {
     measurement_source: 'database' | 'webhook' | 'fallback';
     rules_evaluated: number;
     rules_triggered: number;
+    markup_rate: number;
+    crew_size: number;
+    estimated_weeks: number;
     warnings: Array<{ code: string; message: string }>;
+  };
+}
+
+// ============================================================================
+// INSTALLATION LABOR CALCULATION
+// ============================================================================
+
+/**
+ * Calculate installation labor based on Mike Skjei methodology
+ */
+function calculateInstallationLabor(
+  materials: CombinedLineItem[],
+  laborRates: LaborRate[],
+  productCategory: string = 'lap_siding'
+): { laborItems: LaborLineItem[], subtotal: number } {
+
+  console.log('👷 Calculating installation labor...');
+  console.log(`   Product category: ${productCategory}`);
+
+  const RATE_MAP: Record<string, string> = {
+    'lap_siding': 'Lap Siding Installation',
+    'siding': 'Lap Siding Installation',
+    'shingle': 'Shingle Siding Installation',
+    'panel': 'Panel Siding Installation',
+  };
+
+  const targetRateName = RATE_MAP[productCategory] || 'Lap Siding Installation';
+  console.log(`   Target labor rate: ${targetRateName}`);
+
+  const totalSquares = materials
+    .filter(m =>
+      m.presentation_group === 'Siding' ||
+      m.category?.toLowerCase().includes('siding') ||
+      m.category === 'lap_siding'
+    )
+    .reduce((sum, m) => sum + (m.squares_for_labor || 0), 0);
+
+  console.log(`   Total squares for labor: ${totalSquares.toFixed(2)} SQ`);
+
+  const laborItems: LaborLineItem[] = [];
+
+  if (totalSquares <= 0) {
+    console.log('   ⚠️ No squares for labor - skipping');
+    return { laborItems, subtotal: 0 };
+  }
+
+  const installRate = laborRates.find(r => r.rate_name === targetRateName);
+
+  if (installRate) {
+    const unitCost = parseFloat(installRate.base_rate) || 0;
+    const multiplier = parseFloat(installRate.difficulty_multiplier) || 1.0;
+    const minCharge = parseFloat(installRate.min_charge || '0');
+
+    const baseCost = totalSquares * unitCost * multiplier;
+    const totalCost = Math.max(baseCost, minCharge);
+
+    console.log(`   💵 ${targetRateName}: ${totalSquares.toFixed(2)} SQ × $${unitCost}/SQ = $${totalCost.toFixed(2)}`);
+
+    laborItems.push({
+      rate_id: installRate.id,
+      rate_name: installRate.rate_name,
+      description: installRate.description,
+      quantity: Math.round(totalSquares * 100) / 100,
+      unit: installRate.unit,
+      unit_cost: unitCost,
+      total_cost: Math.round(totalCost * 100) / 100,
+      notes: installRate.notes
+    });
+  } else {
+    console.log(`   ⚠️ Labor rate not found: ${targetRateName}`);
+  }
+
+  const subtotal = laborItems.reduce((sum, item) => sum + item.total_cost, 0);
+  console.log(`   📊 Installation labor subtotal: $${subtotal.toFixed(2)}`);
+
+  return { laborItems, subtotal: Math.round(subtotal * 100) / 100 };
+}
+
+/**
+ * Calculate overhead costs based on Mike Skjei methodology
+ */
+function calculateOverhead(
+  overheadCosts: OverheadCost[],
+  installationLaborSubtotal: number,
+  config: { crew_size?: number; estimated_weeks?: number } = {}
+): { overheadItems: OverheadLineItem[], subtotal: number } {
+
+  console.log('🏗️ Calculating overhead costs...');
+
+  const crewSize = config.crew_size || DEFAULT_CREW_SIZE;
+  const estimatedWeeks = config.estimated_weeks || DEFAULT_ESTIMATED_WEEKS;
+
+  console.log(`   Crew size: ${crewSize}, Estimated weeks: ${estimatedWeeks}`);
+  console.log(`   Installation labor subtotal: $${installationLaborSubtotal.toFixed(2)}`);
+
+  const overheadItems: OverheadLineItem[] = [];
+  const sortedCosts = [...overheadCosts].sort((a, b) => a.display_order - b.display_order);
+
+  for (const cost of sortedCosts) {
+    let amount = 0;
+    let quantity: number | undefined;
+    let rate: number | undefined;
+
+    if (cost.cost_name === 'Project Insurance') {
+      console.log(`   ⏭️ Skipping ${cost.cost_name} (calculated at end)`);
+      continue;
+    }
+
+    switch (cost.cost_type) {
+      case 'percentage':
+        if (cost.calculation_formula?.includes('0.1265')) {
+          rate = SOC_UNEMPLOYMENT_RATE;
+          amount = installationLaborSubtotal * rate;
+          console.log(`   📊 ${cost.cost_name}: ${(rate * 100).toFixed(2)}% × $${installationLaborSubtotal.toFixed(2)} = $${amount.toFixed(2)}`);
+        }
+        break;
+
+      case 'calculated':
+        if (cost.calculation_formula?.includes('crew_size')) {
+          const hours = crewSize * estimatedWeeks * 40;
+          rate = LI_HOURLY_RATE;
+          amount = hours * rate;
+          quantity = hours;
+          console.log(`   📊 ${cost.cost_name}: ${hours} hrs × $${rate}/hr = $${amount.toFixed(2)}`);
+        }
+        break;
+
+      case 'flat_fee':
+        quantity = parseFloat(cost.default_quantity) || 1;
+        rate = parseFloat(cost.base_rate || '0');
+        amount = quantity * rate;
+        console.log(`   📊 ${cost.cost_name}: ${quantity} × $${rate} = $${amount.toFixed(2)}`);
+        break;
+
+      case 'per_day':
+        quantity = parseFloat(cost.default_quantity) || 1;
+        rate = parseFloat(cost.base_rate || '0');
+        amount = quantity * rate;
+        console.log(`   📊 ${cost.cost_name}: ${quantity} days × $${rate}/day = $${amount.toFixed(2)}`);
+        break;
+    }
+
+    if (amount > 0) {
+      overheadItems.push({
+        cost_id: cost.id,
+        cost_name: cost.cost_name,
+        description: cost.description,
+        category: cost.category,
+        quantity,
+        unit: cost.unit || undefined,
+        rate,
+        amount: Math.round(amount * 100) / 100,
+        calculation_type: cost.cost_type,
+        notes: cost.notes
+      });
+    }
+  }
+
+  const subtotal = overheadItems.reduce((sum, item) => sum + item.amount, 0);
+  console.log(`   📊 Overhead subtotal: $${subtotal.toFixed(2)}`);
+
+  return { overheadItems, subtotal: Math.round(subtotal * 100) / 100 };
+}
+
+/**
+ * Calculate final project totals with markup and insurance
+ */
+function calculateProjectTotals(
+  materialCost: number,
+  installationLaborSubtotal: number,
+  overheadSubtotal: number,
+  markupRate: number = MARKUP_RATE
+): ProjectTotals {
+
+  console.log('💰 Calculating project totals...');
+  console.log(`   Material cost: $${materialCost.toFixed(2)}`);
+  console.log(`   Installation labor: $${installationLaborSubtotal.toFixed(2)}`);
+  console.log(`   Overhead: $${overheadSubtotal.toFixed(2)}`);
+  console.log(`   Markup rate: ${(markupRate * 100).toFixed(0)}%`);
+
+  const materialMarkupAmount = materialCost * markupRate;
+  const materialTotal = materialCost + materialMarkupAmount;
+
+  const laborCostBeforeMarkup = installationLaborSubtotal + overheadSubtotal;
+  const laborMarkupAmount = laborCostBeforeMarkup * markupRate;
+  const laborTotal = laborCostBeforeMarkup + laborMarkupAmount;
+
+  const subtotal = materialTotal + laborTotal;
+  const projectInsurance = (subtotal / 1000) * INSURANCE_RATE_PER_THOUSAND;
+  const grandTotal = subtotal + projectInsurance;
+
+  console.log(`   Material total (with markup): $${materialTotal.toFixed(2)}`);
+  console.log(`   Labor total (with markup): $${laborTotal.toFixed(2)}`);
+  console.log(`   Project insurance: $${projectInsurance.toFixed(2)}`);
+  console.log(`   Grand total: $${grandTotal.toFixed(2)}`);
+
+  return {
+    material_cost: Math.round(materialCost * 100) / 100,
+    material_markup_rate: markupRate,
+    material_markup_amount: Math.round(materialMarkupAmount * 100) / 100,
+    material_total: Math.round(materialTotal * 100) / 100,
+
+    installation_labor_subtotal: Math.round(installationLaborSubtotal * 100) / 100,
+    overhead_subtotal: Math.round(overheadSubtotal * 100) / 100,
+    labor_cost_before_markup: Math.round(laborCostBeforeMarkup * 100) / 100,
+    labor_markup_rate: markupRate,
+    labor_markup_amount: Math.round(laborMarkupAmount * 100) / 100,
+    labor_total: Math.round(laborTotal * 100) / 100,
+
+    subtotal: Math.round(subtotal * 100) / 100,
+    project_insurance: Math.round(projectInsurance * 100) / 100,
+    grand_total: Math.round(grandTotal * 100) / 100
   };
 }
 
@@ -88,7 +403,59 @@ export async function calculateWithAutoScopeV2(
   const missingItems: string[] = [];
 
   let totalMaterialCost = 0;
-  let totalLaborCost = 0;
+  // Note: Per-item labor removed - labor calculated separately via calculateInstallationLabor()
+
+  // =========================================================================
+  // FETCH LABOR RATES AND OVERHEAD COSTS FROM DATABASE
+  // =========================================================================
+
+  let laborRates: LaborRate[] = [];
+  let sidingOverheadCosts: OverheadCost[] = [];
+
+  if (isDatabaseConfigured()) {
+    const client = getSupabaseClient();
+
+    // Fetch labor rates for the trade
+    console.log('📋 Fetching labor rates...');
+    const { data: laborData, error: laborError } = await client
+      .from('labor_rates')
+      .select('*')
+      .eq('active', true)
+      .eq('trade', 'siding');
+
+    if (laborError) {
+      console.error('Error fetching labor rates:', laborError);
+      warnings.push({
+        code: 'LABOR_RATES_FETCH_ERROR',
+        message: `Failed to fetch labor rates: ${laborError.message}`,
+      });
+    } else {
+      laborRates = (laborData || []) as LaborRate[];
+      console.log(`   Found ${laborRates.length} labor rates`);
+    }
+
+    // Fetch overhead costs
+    console.log('📋 Fetching overhead costs...');
+    const { data: overheadData, error: overheadError } = await client
+      .from('overhead_costs')
+      .select('*')
+      .eq('active', true);
+
+    if (overheadError) {
+      console.error('Error fetching overhead costs:', overheadError);
+      warnings.push({
+        code: 'OVERHEAD_COSTS_FETCH_ERROR',
+        message: `Failed to fetch overhead costs: ${overheadError.message}`,
+      });
+    } else {
+      // Filter for siding trade or universal costs
+      sidingOverheadCosts = ((overheadData || []) as OverheadCost[]).filter(cost =>
+        cost.applies_to_trade === null ||
+        (Array.isArray(cost.applies_to_trade) && cost.applies_to_trade.includes('siding'))
+      );
+      console.log(`   Found ${sidingOverheadCosts.length} overhead costs for siding`);
+    }
+  }
 
   // =========================================================================
   // PART 1: Process Material Assignments (ID-based pricing)
@@ -115,8 +482,14 @@ export async function calculateWithAutoScopeV2(
       // Calculate quantity based on unit conversion
       const quantity = calculateMaterialQuantity(assignment, pricing);
       const materialCost = quantity * Number(pricing.material_cost || 0);
-      const laborCost = calculateLaborForMaterial(pricing, quantity);
-      const totalExtended = Math.round((materialCost + laborCost) * 100) / 100;
+      const materialExtended = Math.round(materialCost * 100) / 100;
+
+      // Calculate squares for labor (SF / 100 = squares)
+      let squaresForLabor = 0;
+      if (assignment.unit === 'SF') {
+        squaresForLabor = assignment.quantity / 100;
+        console.log(`   📐 Squares for labor: ${assignment.quantity} SF / 100 = ${squaresForLabor.toFixed(2)} SQ`);
+      }
 
       lineItems.push({
         description: pricing.product_name,
@@ -127,10 +500,12 @@ export async function calculateWithAutoScopeV2(
         presentation_group: getPresentationGroup(pricing.category),
 
         material_unit_cost: Number(pricing.material_cost || 0),
-        material_extended: Math.round(materialCost * 100) / 100,
-        labor_unit_cost: Number(pricing.base_labor_cost || 0),
-        labor_extended: Math.round(laborCost * 100) / 100,
-        total_extended: totalExtended,
+        material_extended: materialExtended,
+        labor_unit_cost: 0,  // Labor calculated separately by squares
+        labor_extended: 0,   // Labor calculated separately by squares
+        total_extended: materialExtended,  // Material only - labor separate
+
+        squares_for_labor: squaresForLabor,
 
         calculation_source: 'assigned_material',
         pricing_item_id: assignment.pricing_item_id,
@@ -141,7 +516,7 @@ export async function calculateWithAutoScopeV2(
       });
 
       totalMaterialCost += materialCost;
-      totalLaborCost += laborCost;
+      // Labor is now calculated separately via calculateInstallationLabor()
     }
   }
 
@@ -170,8 +545,6 @@ export async function calculateWithAutoScopeV2(
 
   // Add auto-scope line items
   for (const autoItem of autoScopeResult.line_items) {
-    const autoTotalExtended = Math.round((autoItem.material_extended + autoItem.labor_extended) * 100) / 100;
-
     lineItems.push({
       description: autoItem.description,
       sku: autoItem.sku,
@@ -182,9 +555,9 @@ export async function calculateWithAutoScopeV2(
 
       material_unit_cost: autoItem.material_unit_cost,
       material_extended: autoItem.material_extended,
-      labor_unit_cost: autoItem.labor_unit_cost,
-      labor_extended: autoItem.labor_extended,
-      total_extended: autoTotalExtended,
+      labor_unit_cost: 0,  // Labor calculated separately by squares
+      labor_extended: 0,   // Labor calculated separately by squares
+      total_extended: autoItem.material_extended,  // Material only - labor separate
 
       calculation_source: 'auto-scope',
       rule_id: autoItem.rule_id,
@@ -193,17 +566,36 @@ export async function calculateWithAutoScopeV2(
     });
 
     totalMaterialCost += autoItem.material_extended;
-    totalLaborCost += autoItem.labor_extended;
+    // Labor is now calculated separately via calculateInstallationLabor()
   }
 
   // =========================================================================
-  // PART 3: Calculate Totals
+  // PART 3: Calculate Labor and Overhead using Mike Skjei Methodology
   // =========================================================================
 
-  const overhead = totalLaborCost * 0.10; // 10% overhead on labor
-  const subtotal = totalMaterialCost + totalLaborCost + overhead;
-  const markupAmount = subtotal * markupRate;
-  const total = subtotal + markupAmount;
+  // Calculate material total (sum of material_extended from all items)
+  const materialTotal = lineItems.reduce((sum, item) => sum + (item.material_extended || 0), 0);
+  console.log(`📊 Material total: $${materialTotal.toFixed(2)}`);
+
+  // Calculate installation labor using squares
+  const { laborItems, subtotal: laborSubtotal } = calculateInstallationLabor(
+    lineItems,
+    laborRates,
+    'lap_siding'
+  );
+
+  // Calculate overhead costs
+  const { overheadItems, subtotal: overheadSubtotal } = calculateOverhead(
+    sidingOverheadCosts,
+    laborSubtotal
+  );
+
+  // Calculate final totals with markup
+  const projectTotals = calculateProjectTotals(
+    materialTotal,
+    laborSubtotal,
+    overheadSubtotal
+  );
 
   // =========================================================================
   // PART 4: Build Result
@@ -215,17 +607,27 @@ export async function calculateWithAutoScopeV2(
   return {
     success: true,
     line_items: lineItems,
-    totals: {
-      material_cost: Math.round(totalMaterialCost * 100) / 100,
-      labor_cost: Math.round(totalLaborCost * 100) / 100,
-      overhead: Math.round(overhead * 100) / 100,
-      subtotal: Math.round(subtotal * 100) / 100,
-      markup_percent: markupRate * 100,
-      markup_amount: Math.round(markupAmount * 100) / 100,
-      total: Math.round(total * 100) / 100,
+    labor: {
+      installation_items: laborItems,
+      installation_subtotal: laborSubtotal,
     },
+    overhead: {
+      items: overheadItems,
+      subtotal: overheadSubtotal,
+    },
+    totals: {
+      material_cost: projectTotals.material_cost,
+      labor_cost: projectTotals.labor_total,
+      overhead: projectTotals.overhead_subtotal,
+      subtotal: projectTotals.subtotal,
+      markup_percent: projectTotals.material_markup_rate * 100,
+      markup_amount: projectTotals.material_markup_amount + projectTotals.labor_markup_amount,
+      total: projectTotals.grand_total,
+    },
+    project_totals: projectTotals,
     metadata: {
       pricing_method: 'hybrid-v2',
+      calculation_method: 'mike_skjei_v1',
       assigned_items_count: assignedCount,
       auto_scope_items_count: autoScopeCount,
       items_priced: assignedCount + autoScopeCount,
@@ -235,6 +637,9 @@ export async function calculateWithAutoScopeV2(
       measurement_source: autoScopeResult.measurement_source,
       rules_evaluated: autoScopeResult.rules_evaluated,
       rules_triggered: autoScopeResult.rules_triggered,
+      markup_rate: MARKUP_RATE,
+      crew_size: DEFAULT_CREW_SIZE,
+      estimated_weeks: DEFAULT_ESTIMATED_WEEKS,
       warnings,
     },
   };
@@ -260,6 +665,7 @@ function consolidateLineItems(lineItems: CombinedLineItem[]): CombinedLineItem[]
       existing.material_extended += item.material_extended;
       existing.labor_extended += item.labor_extended;
       existing.total_extended += item.total_extended;
+      existing.squares_for_labor = (existing.squares_for_labor || 0) + (item.squares_for_labor || 0);
 
       // Track all detection IDs for provenance
       if (item.detection_ids) {
@@ -272,7 +678,8 @@ function consolidateLineItems(lineItems: CombinedLineItem[]): CombinedLineItem[]
       consolidated.set(key, {
         ...item,
         detection_ids: item.detection_ids || (item.detection_id ? [item.detection_id] : []),
-        detection_count: 1
+        detection_count: 1,
+        squares_for_labor: item.squares_for_labor || 0,
       });
     }
   }
@@ -337,22 +744,7 @@ function calculateMaterialQuantity(
   return Math.ceil(assignment.quantity * wasteMultiplier);
 }
 
-/**
- * Calculate labor cost for a material using Mike Skjei methodology
- */
-function calculateLaborForMaterial(
-  pricing: PricingItem,
-  quantity: number
-): number {
-  const baseLaborCost = Number(pricing.base_labor_cost || 0);
-
-  if (baseLaborCost === 0) return 0;
-
-  // Use pre-calculated total if available, otherwise calculate
-  const totalRate = pricing.total_labor_cost || calculateTotalLabor(baseLaborCost);
-
-  return quantity * totalRate;
-}
+// Note: calculateLaborForMaterial removed - labor now calculated separately via calculateInstallationLabor()
 
 /**
  * Map category to presentation group for consistent Excel output
