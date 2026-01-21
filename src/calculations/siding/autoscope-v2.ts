@@ -152,15 +152,46 @@ export function buildMeasurementContext(
     level_starter_lf: get('level_starter_lf'),
     avg_wall_height_ft: get('avg_wall_height_ft', 'avg_wall_height_ft', 10),
 
-    // Computed helpers
+    // Computed helpers (will be calculated below)
     total_opening_perimeter_lf: 0,
     total_corner_lf: 0,
+    total_openings_area_sqft: 0,
+    total_openings_count: 0,
+
+    // ALIASES for database formula compatibility (will be set below)
+    facade_area_sqft: 0,
+    openings_area_sqft: 0,
+    outside_corners_count: 0,
+    inside_corners_count: 0,
+    openings_perimeter_lf: 0,
+    openings_count: 0,
+    facade_perimeter_lf: 0,
+    facade_height_ft: 0,
   };
 
   // Calculate computed fields
   ctx.total_opening_perimeter_lf =
     ctx.window_perimeter_lf + ctx.door_perimeter_lf + ctx.garage_perimeter_lf;
   ctx.total_corner_lf = ctx.outside_corner_lf + ctx.inside_corner_lf;
+  ctx.total_openings_area_sqft =
+    ctx.window_area_sqft + ctx.door_area_sqft + ctx.garage_area_sqft;
+  ctx.total_openings_count =
+    ctx.window_count + ctx.door_count + ctx.garage_count;
+
+  // Set ALIASES for database formula compatibility
+  ctx.facade_area_sqft = ctx.facade_sqft;
+  ctx.openings_area_sqft = ctx.total_openings_area_sqft;
+  ctx.outside_corners_count = ctx.outside_corner_count;
+  ctx.inside_corners_count = ctx.inside_corner_count;
+  ctx.openings_perimeter_lf = ctx.total_opening_perimeter_lf;
+  ctx.openings_count = ctx.total_openings_count;
+  ctx.facade_height_ft = ctx.avg_wall_height_ft;
+
+  // Estimate facade perimeter from area and height (perimeter = area / height)
+  // This is an approximation; actual perimeter would be more accurate from direct measurement
+  ctx.facade_perimeter_lf = ctx.avg_wall_height_ft > 0
+    ? ctx.facade_sqft / ctx.avg_wall_height_ft
+    : 0;
 
   return ctx;
 }

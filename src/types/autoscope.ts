@@ -87,6 +87,21 @@ export interface MeasurementContext {
   // Computed helpers
   total_opening_perimeter_lf: number;
   total_corner_lf: number;
+  total_openings_area_sqft: number;
+  total_openings_count: number;
+
+  // =========================================================================
+  // ALIASES for database formula compatibility
+  // Database formulas use these variable names
+  // =========================================================================
+  facade_area_sqft: number;           // alias for facade_sqft
+  openings_area_sqft: number;         // alias for total_openings_area_sqft
+  outside_corners_count: number;      // alias for outside_corner_count
+  inside_corners_count: number;       // alias for inside_corner_count
+  openings_perimeter_lf: number;      // alias for total_opening_perimeter_lf
+  openings_count: number;             // alias for total_openings_count
+  facade_perimeter_lf: number;        // computed from facade dimensions
+  facade_height_ft: number;           // alias for avg_wall_height_ft
 }
 
 // ============================================================================
