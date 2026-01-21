@@ -317,6 +317,17 @@ function calculateMaterialQuantity(
     return Math.ceil(assignment.quantity * wasteMultiplier);
   }
 
+  // For siding/materials sold by piece with coverage data (e.g., HardiePlank)
+  // Converts SF → ea using coverage_value from pricing_items
+  if (assignment.unit === 'SF' && (pricingUnit === 'ea' || pricingUnit === 'pc' || pricingUnit === 'piece')) {
+    const coveragePerPiece = pricing.coverage_value || 7.25; // Default to 7.25 SF per plank
+    const pieces = Math.ceil((assignment.quantity * wasteMultiplier) / coveragePerPiece);
+
+    console.log(`📐 SF→ea conversion: ${assignment.quantity} SF × ${wasteMultiplier} waste ÷ ${coveragePerPiece} coverage = ${pieces} pieces`);
+
+    return pieces;
+  }
+
   // Count-based items (EA to EA)
   if (assignment.unit === 'EA') {
     return assignment.quantity;
