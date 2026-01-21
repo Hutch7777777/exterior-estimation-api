@@ -1,30 +1,74 @@
 /**
  * Auto-Scope V2 - Database-Driven Rules Engine
  * Fetches rules from siding_auto_scope_rules table and generates line items
+ *
+ * FIXED: Now correctly maps to actual database schema:
+ * - rule_id (not id)
+ * - material_sku (not sku)
+ * - rule_name (not product_name)
+ * - active (not is_active)
+ * - trigger_condition (singular, JSONB object, not array)
  */
 
 import { getSupabaseClient, isDatabaseConfigured } from '../../services/database';
 import { getPricingBySkus, calculateTotalLabor } from '../../services/pricing';
 import {
-  AutoScopeRule,
   MeasurementContext,
   AutoScopeLineItem,
   AutoScopeV2Result,
-  TriggerCondition,
   CadHoverMeasurements
 } from '../../types/autoscope';
+
+// ============================================================================
+// DATABASE RULE TYPE (matches actual siding_auto_scope_rules table)
+// ============================================================================
+
+interface DbAutoScopeRule {
+  rule_id: number;
+  rule_name: string;
+  description: string | null;
+  material_category: string;
+  material_sku: string;
+  quantity_formula: string;
+  unit: string;
+  output_unit: string | null;
+  size_description: string | null;
+  trigger_condition: DbTriggerCondition | null;
+  presentation_group: string;
+  group_order: number;
+  item_order: number;
+  priority: number;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// Database uses this format for trigger conditions:
+// { "always": true } - always trigger
+// { "min_corners": 1 } - min corners count
+// { "min_openings": 1 } - min openings count
+// { "min_net_area": 500 } - min net area sqft
+interface DbTriggerCondition {
+  always?: boolean;
+  min_corners?: number;
+  min_openings?: number;
+  min_net_area?: number;
+  min_facade_area?: number;
+  // Add more as needed
+}
 
 // ============================================================================
 // FETCH RULES FROM DATABASE
 // ============================================================================
 
-let rulesCache: AutoScopeRule[] | null = null;
+let rulesCache: DbAutoScopeRule[] | null = null;
 let rulesCacheTimestamp: number = 0;
 const RULES_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-export async function fetchAutoScopeRules(): Promise<AutoScopeRule[]> {
+export async function fetchAutoScopeRules(): Promise<DbAutoScopeRule[]> {
   // Check cache
   if (rulesCache && (Date.now() - rulesCacheTimestamp) < RULES_CACHE_TTL_MS) {
+    console.log(`📋 Using cached auto-scope rules (${rulesCache.length} rules)`);
     return rulesCache;
   }
 
@@ -38,15 +82,16 @@ export async function fetchAutoScopeRules(): Promise<AutoScopeRule[]> {
     const { data, error } = await client
       .from('siding_auto_scope_rules')
       .select('*')
-      .eq('is_active', true)
-      .order('display_order', { ascending: true });
+      .eq('active', true)  // FIXED: was 'is_active'
+      .order('group_order', { ascending: true })
+      .order('item_order', { ascending: true });
 
     if (error) {
       console.error('❌ Error fetching auto-scope rules:', error.message);
       return getFallbackRules();
     }
 
-    rulesCache = data as AutoScopeRule[];
+    rulesCache = data as DbAutoScopeRule[];
     rulesCacheTimestamp = Date.now();
     console.log(`✅ Loaded ${rulesCache.length} auto-scope rules from database`);
     return rulesCache;
@@ -102,123 +147,88 @@ export function buildMeasurementContext(
   dbMeasurements?: CadHoverMeasurements | null,
   webhookMeasurements?: Record<string, any>
 ): MeasurementContext {
-  // Cast to any for flexible property access from both sources
+  // Cast to any for flexible property access
   const db: any = dbMeasurements || {};
   const wh: any = webhookMeasurements || {};
 
-  // Helper to safely get numeric value
-  const num = (val: any, fallback: number = 0): number => {
-    const n = Number(val);
-    return isNaN(n) ? fallback : n;
+  // Helper to get value from db first, then webhook, with fallback
+  const get = (keys: string[], fallback: number = 0): number => {
+    for (const key of keys) {
+      if (db[key] !== undefined && db[key] !== null) return Number(db[key]);
+      if (wh[key] !== undefined && wh[key] !== null) return Number(wh[key]);
+    }
+    return fallback;
   };
 
-  // ==========================================================================
-  // ACTUAL DATABASE COLUMN NAMES (from cad_hover_measurements table):
-  // - facade_total_sqft
-  // - net_siding_sqft
-  // - openings_area_sqft (pre-computed total)
-  // - openings_count (pre-computed total)
-  // - openings_total_perimeter_lf (pre-computed total)
-  // - corners_outside_count
-  // - corners_inside_count
-  // - level_starter_lf
-  // - avg_wall_height_ft
-  // ==========================================================================
+  // =========================================================================
+  // Map ACTUAL database column names from cad_hover_measurements
+  // =========================================================================
 
-  // Primary areas - map actual DB column names
-  const facade_sqft = num(db.facade_total_sqft) || num(db.facade_sqft) ||
-                      num(wh.facade_sqft) || num(wh.gross_wall_area_sqft) || 0;
+  // Primary areas - DB uses facade_total_sqft, net_siding_sqft
+  const facade_sqft = get(['facade_total_sqft', 'facade_sqft', 'gross_wall_area_sqft']);
+  const net_siding_sqft = get(['net_siding_sqft', 'net_siding_area_sqft', 'net_wall_area_sqft']);
 
-  const net_siding_area_sqft = num(db.net_siding_sqft) || num(db.net_siding_area_sqft) ||
-                               num(wh.net_siding_area_sqft) || num(wh.net_wall_area_sqft) || 0;
+  // Openings - DB has pre-computed totals
+  const openings_area_sqft = get(['openings_area_sqft']);
+  const openings_count = get(['openings_count']);
+  const openings_perimeter_lf = get(['openings_total_perimeter_lf', 'openings_perimeter_lf']);
 
-  // Openings - DB has pre-computed totals, webhook has nested objects
-  const openings_area_sqft = num(db.openings_area_sqft) ||
-    (num(wh.windows?.total_area_sqft) + num(wh.doors?.total_area_sqft) + num(wh.garages?.total_area_sqft));
+  // Corners - DB uses corners_outside_count, corners_inside_count
+  const outside_corners_count = get(['corners_outside_count', 'outside_corner_count', 'outside_corners_count']);
+  const inside_corners_count = get(['corners_inside_count', 'inside_corner_count', 'inside_corners_count']);
+  const outside_corner_lf = get(['corners_outside_lf', 'outside_corner_lf']);
+  const inside_corner_lf = get(['corners_inside_lf', 'inside_corner_lf']);
 
-  const openings_count = num(db.openings_count) ||
-    (num(wh.windows?.count) + num(wh.doors?.count) + num(wh.garages?.count));
+  // Other
+  const level_starter_lf = get(['level_starter_lf']);
+  const avg_wall_height_ft = get(['avg_wall_height_ft'], 10); // Default 10ft if null
 
-  const openings_perimeter_lf = num(db.openings_total_perimeter_lf) ||
-    (num(wh.windows?.perimeter_lf) + num(wh.doors?.perimeter_lf) + num(wh.garages?.perimeter_lf));
+  // Windows/Doors/Garages for individual calculations
+  const window_count = get(['windows_count', 'window_count']);
+  const door_count = get(['doors_count', 'door_count']);
+  const garage_count = get(['garages_count', 'garage_count']);
 
-  // Corners - map actual DB column names (corners_outside_count, not outside_corner_count)
-  const outside_corner_count = num(db.corners_outside_count) || num(db.outside_corner_count) ||
-                               num(wh.outside_corners?.count) || 0;
-
-  const inside_corner_count = num(db.corners_inside_count) || num(db.inside_corner_count) ||
-                              num(wh.inside_corners?.count) || 0;
-
-  // Other measurements
-  const level_starter_lf = num(db.level_starter_lf) || num(wh.level_starter_lf) || 0;
-  const avg_wall_height_ft = num(db.avg_wall_height_ft) || num(wh.avg_wall_height_ft) || 10;
-
-  // Individual opening breakdowns (from webhook nested objects)
-  const window_count = num(db.window_count) || num(wh.windows?.count) || 0;
-  const window_area_sqft = num(db.window_total_area_sqft) || num(wh.windows?.total_area_sqft) || 0;
-  const window_perimeter_lf = num(db.window_perimeter_lf) || num(wh.windows?.perimeter_lf) || 0;
-  const window_head_lf = num(db.window_head_lf) || num(wh.windows?.head_lf) || 0;
-  const window_sill_lf = num(db.window_sill_lf) || num(wh.windows?.sill_lf) || 0;
-  const window_jamb_lf = num(db.window_jamb_lf) || num(wh.windows?.jamb_lf) || 0;
-
-  const door_count = num(db.door_count) || num(wh.doors?.count) || 0;
-  const door_area_sqft = num(db.door_total_area_sqft) || num(wh.doors?.total_area_sqft) || 0;
-  const door_perimeter_lf = num(db.door_perimeter_lf) || num(wh.doors?.perimeter_lf) || 0;
-  const door_head_lf = num(db.door_head_lf) || num(wh.doors?.head_lf) || 0;
-  const door_jamb_lf = num(db.door_jamb_lf) || num(wh.doors?.jamb_lf) || 0;
-
-  const garage_count = num(db.garage_count) || num(wh.garages?.count) || 0;
-  const garage_area_sqft = num(db.garage_total_area_sqft) || num(wh.garages?.total_area_sqft) || 0;
-  const garage_perimeter_lf = num(db.garage_perimeter_lf) || num(wh.garages?.perimeter_lf) || 0;
-
-  // Corner LF (not always available)
-  const outside_corner_lf = num(db.outside_corner_lf) || num(wh.outside_corners?.total_lf) || 0;
-  const inside_corner_lf = num(db.inside_corner_lf) || num(wh.inside_corners?.total_lf) || 0;
-
-  // Gables
-  const gable_count = num(db.gable_count) || num(wh.gables?.count) || 0;
-  const gable_area_sqft = num(db.gable_area_sqft) || num(wh.gables?.area_sqft) || 0;
-  const gable_rake_lf = num(db.gable_rake_lf) || num(wh.gables?.rake_lf) || 0;
-
-  // Compute facade perimeter (area / height)
-  const facade_perimeter_lf = avg_wall_height_ft > 0 ? facade_sqft / avg_wall_height_ft : 0;
+  // Compute facade_perimeter_lf from area and height
+  const facade_perimeter_lf = avg_wall_height_ft > 0
+    ? facade_sqft / avg_wall_height_ft
+    : level_starter_lf || 0;
 
   const ctx: MeasurementContext = {
     // Primary areas
     facade_sqft,
     gross_wall_area_sqft: facade_sqft,
-    net_siding_area_sqft,
+    net_siding_area_sqft: net_siding_sqft,
 
     // Windows
     window_count,
-    window_area_sqft,
-    window_perimeter_lf,
-    window_head_lf,
-    window_sill_lf,
-    window_jamb_lf,
+    window_area_sqft: get(['windows_area_sqft', 'window_area_sqft']),
+    window_perimeter_lf: get(['windows_perimeter_lf', 'window_perimeter_lf']),
+    window_head_lf: get(['windows_head_lf', 'window_head_lf']),
+    window_sill_lf: get(['windows_sill_lf', 'window_sill_lf']),
+    window_jamb_lf: get(['windows_jamb_lf', 'window_jamb_lf']),
 
     // Doors
     door_count,
-    door_area_sqft,
-    door_perimeter_lf,
-    door_head_lf,
-    door_jamb_lf,
+    door_area_sqft: get(['doors_area_sqft', 'door_area_sqft']),
+    door_perimeter_lf: get(['doors_perimeter_lf', 'door_perimeter_lf']),
+    door_head_lf: get(['doors_head_lf', 'door_head_lf']),
+    door_jamb_lf: get(['doors_jamb_lf', 'door_jamb_lf']),
 
     // Garages
     garage_count,
-    garage_area_sqft,
-    garage_perimeter_lf,
+    garage_area_sqft: get(['garages_area_sqft', 'garage_area_sqft']),
+    garage_perimeter_lf: get(['garages_perimeter_lf', 'garage_perimeter_lf']),
 
     // Corners
-    outside_corner_count,
+    outside_corner_count: outside_corners_count,
     outside_corner_lf,
-    inside_corner_count,
+    inside_corner_count: inside_corners_count,
     inside_corner_lf,
 
     // Gables
-    gable_count,
-    gable_area_sqft,
-    gable_rake_lf,
+    gable_count: get(['gables_count', 'gable_count']),
+    gable_area_sqft: get(['gables_area_sqft', 'gable_area_sqft']),
+    gable_rake_lf: get(['gables_rake_lf', 'gable_rake_lf']),
 
     // Other
     level_starter_lf,
@@ -230,21 +240,20 @@ export function buildMeasurementContext(
     total_openings_area_sqft: openings_area_sqft,
     total_openings_count: openings_count,
 
-    // =======================================================================
+    // =========================================================================
     // ALIASES for database formula compatibility
-    // These match the variable names used in siding_auto_scope_rules formulas
-    // =======================================================================
+    // These match the variable names used in quantity_formula
+    // =========================================================================
     facade_area_sqft: facade_sqft,
     openings_area_sqft: openings_area_sqft,
-    outside_corners_count: outside_corner_count,
-    inside_corners_count: inside_corner_count,
+    outside_corners_count: outside_corners_count,
+    inside_corners_count: inside_corners_count,
     openings_perimeter_lf: openings_perimeter_lf,
     openings_count: openings_count,
     facade_perimeter_lf: facade_perimeter_lf,
     facade_height_ft: avg_wall_height_ft,
   };
 
-  // Debug logging
   console.log(`📊 MeasurementContext built:`, {
     facade_area_sqft: ctx.facade_area_sqft,
     net_siding_area_sqft: ctx.net_siding_area_sqft,
@@ -253,59 +262,78 @@ export function buildMeasurementContext(
     openings_perimeter_lf: ctx.openings_perimeter_lf,
     outside_corners_count: ctx.outside_corners_count,
     inside_corners_count: ctx.inside_corners_count,
-    level_starter_lf: ctx.level_starter_lf,
-    facade_height_ft: ctx.facade_height_ft,
     facade_perimeter_lf: ctx.facade_perimeter_lf,
+    facade_height_ft: ctx.facade_height_ft,
+    level_starter_lf: ctx.level_starter_lf,
   });
 
   return ctx;
 }
 
 // ============================================================================
-// EVALUATE TRIGGER CONDITIONS
+// EVALUATE TRIGGER CONDITIONS (FIXED for actual DB format)
 // ============================================================================
 
-export function evaluateTriggerCondition(
-  condition: TriggerCondition,
-  context: MeasurementContext
-): boolean {
-  const fieldValue = (context as Record<string, any>)[condition.field];
-
-  switch (condition.operator) {
-    case 'gt':
-      return Number(fieldValue) > Number(condition.value);
-    case 'gte':
-      return Number(fieldValue) >= Number(condition.value);
-    case 'lt':
-      return Number(fieldValue) < Number(condition.value);
-    case 'lte':
-      return Number(fieldValue) <= Number(condition.value);
-    case 'eq':
-      return fieldValue === condition.value;
-    case 'neq':
-      return fieldValue !== condition.value;
-    case 'exists':
-      return fieldValue !== undefined && fieldValue !== null && fieldValue !== 0;
-    case 'not_exists':
-      return fieldValue === undefined || fieldValue === null || fieldValue === 0;
-    default:
-      return true;
-  }
-}
-
+/**
+ * Check if a rule should be applied based on its trigger condition
+ * Database format:
+ * - { "always": true } → always trigger
+ * - { "min_corners": 1 } → trigger if corners >= 1
+ * - { "min_openings": 1 } → trigger if openings >= 1
+ * - { "min_net_area": 500 } → trigger if net_siding_area >= 500
+ */
 export function shouldApplyRule(
-  rule: AutoScopeRule,
+  rule: DbAutoScopeRule,
   context: MeasurementContext
-): boolean {
-  // If no trigger conditions, always apply
-  if (!rule.trigger_conditions || rule.trigger_conditions.length === 0) {
-    return true;
+): { applies: boolean; reason: string } {
+  const tc = rule.trigger_condition;
+
+  // No trigger condition = always apply
+  if (!tc) {
+    return { applies: true, reason: 'no condition' };
   }
 
-  // All conditions must be true (AND logic)
-  return rule.trigger_conditions.every(condition =>
-    evaluateTriggerCondition(condition, context)
-  );
+  // { "always": true }
+  if (tc.always === true) {
+    return { applies: true, reason: 'always=true' };
+  }
+
+  // { "min_corners": N } - check total corners
+  if (tc.min_corners !== undefined) {
+    const totalCorners = context.outside_corners_count + context.inside_corners_count;
+    if (totalCorners >= tc.min_corners) {
+      return { applies: true, reason: `corners=${totalCorners} >= ${tc.min_corners}` };
+    }
+    return { applies: false, reason: `corners=${totalCorners} < ${tc.min_corners}` };
+  }
+
+  // { "min_openings": N } - check total openings
+  if (tc.min_openings !== undefined) {
+    if (context.openings_count >= tc.min_openings) {
+      return { applies: true, reason: `openings=${context.openings_count} >= ${tc.min_openings}` };
+    }
+    return { applies: false, reason: `openings=${context.openings_count} < ${tc.min_openings}` };
+  }
+
+  // { "min_net_area": N } - check net siding area
+  if (tc.min_net_area !== undefined) {
+    if (context.net_siding_area_sqft >= tc.min_net_area) {
+      return { applies: true, reason: `net_area=${context.net_siding_area_sqft} >= ${tc.min_net_area}` };
+    }
+    return { applies: false, reason: `net_area=${context.net_siding_area_sqft} < ${tc.min_net_area}` };
+  }
+
+  // { "min_facade_area": N } - check facade area
+  if (tc.min_facade_area !== undefined) {
+    if (context.facade_area_sqft >= tc.min_facade_area) {
+      return { applies: true, reason: `facade_area=${context.facade_area_sqft} >= ${tc.min_facade_area}` };
+    }
+    return { applies: false, reason: `facade_area=${context.facade_area_sqft} < ${tc.min_facade_area}` };
+  }
+
+  // Unknown trigger condition format - log and apply by default
+  console.warn(`⚠️ Unknown trigger condition format for rule ${rule.rule_id}:`, tc);
+  return { applies: true, reason: 'unknown format - defaulting to apply' };
 }
 
 // ============================================================================
@@ -315,28 +343,25 @@ export function shouldApplyRule(
 export function evaluateFormula(
   formula: string,
   context: MeasurementContext
-): number {
+): { result: number; error?: string } {
   try {
     // Create a function that has access to all context variables
     const contextKeys = Object.keys(context);
     const contextValues = Object.values(context);
 
     // Safe formula evaluation using Function constructor
-    // This is safer than eval() as it creates a sandboxed scope
     const fn = new Function(...contextKeys, `return ${formula};`);
     const result = fn(...contextValues);
 
     // Ensure we return a valid number
     const numResult = Number(result);
     if (isNaN(numResult) || !isFinite(numResult)) {
-      console.warn(`⚠️ Formula "${formula}" returned invalid result: ${result}`);
-      return 0;
+      return { result: 0, error: `Invalid result: ${result}` };
     }
 
-    return Math.max(0, numResult); // Never return negative quantities
+    return { result: Math.max(0, numResult) }; // Never return negative quantities
   } catch (err) {
-    console.error(`❌ Error evaluating formula "${formula}":`, err);
-    return 0;
+    return { result: 0, error: String(err) };
   }
 }
 
@@ -377,59 +402,73 @@ export async function generateAutoScopeItemsV2(
   const rules = await fetchAutoScopeRules();
   result.rules_evaluated = rules.length;
 
+  console.log(`📋 Evaluating ${rules.length} auto-scope rules...`);
+
   // 3. Evaluate each rule
-  const triggeredRules: Array<{ rule: AutoScopeRule; quantity: number }> = [];
+  const triggeredRules: Array<{ rule: DbAutoScopeRule; quantity: number }> = [];
 
   for (const rule of rules) {
-    if (shouldApplyRule(rule, context)) {
-      const quantity = evaluateFormula(rule.quantity_formula, context);
+    const { applies, reason } = shouldApplyRule(rule, context);
+
+    if (applies) {
+      const { result: quantity, error } = evaluateFormula(rule.quantity_formula, context);
+
+      if (error) {
+        console.warn(`⚠️ Rule ${rule.rule_id} (${rule.rule_name}): Formula error - ${error}`);
+        result.rules_skipped.push(`${rule.material_sku}: formula error - ${error}`);
+        continue;
+      }
 
       if (quantity > 0) {
         triggeredRules.push({ rule, quantity });
         result.rules_triggered++;
+        console.log(`  ✓ Rule ${rule.rule_id}: ${rule.rule_name} → ${Math.ceil(quantity)} ${rule.unit} (${reason})`);
       } else {
-        result.rules_skipped.push(`${rule.sku}: quantity=0`);
+        result.rules_skipped.push(`${rule.material_sku}: quantity=0`);
+        console.log(`  ○ Rule ${rule.rule_id}: ${rule.rule_name} → 0 (formula returned 0)`);
       }
     } else {
-      result.rules_skipped.push(`${rule.sku}: trigger not met`);
+      result.rules_skipped.push(`${rule.material_sku}: ${reason}`);
+      console.log(`  ✗ Rule ${rule.rule_id}: ${rule.rule_name} → skipped (${reason})`);
     }
   }
 
   // 4. Fetch pricing for triggered SKUs
-  const skus = triggeredRules.map(tr => tr.rule.sku);
+  const skus = triggeredRules.map(tr => tr.rule.material_sku);
   const pricingMap = await getPricingBySkus(skus, organizationId);
 
   // 5. Build line items with pricing
   for (const { rule, quantity } of triggeredRules) {
-    const pricing = pricingMap.get(rule.sku);
+    const pricing = pricingMap.get(rule.material_sku);
 
     const materialUnitCost = Number(pricing?.material_cost || 0);
     const laborUnitCost = Number(pricing?.base_labor_cost || 0);
     const totalLaborRate = pricing?.total_labor_cost || calculateTotalLabor(laborUnitCost);
+    const finalQuantity = Math.ceil(quantity);
 
     const lineItem: AutoScopeLineItem = {
-      description: rule.product_name,
-      sku: rule.sku,
-      quantity: Math.ceil(quantity), // Round up to whole units
-      unit: rule.unit,
-      category: rule.category,
+      description: rule.rule_name,  // FIXED: was product_name
+      sku: rule.material_sku,       // FIXED: was sku
+      quantity: finalQuantity,
+      unit: rule.output_unit || rule.unit,
+      category: rule.material_category,
       presentation_group: rule.presentation_group,
 
       material_unit_cost: materialUnitCost,
-      material_extended: Math.round(Math.ceil(quantity) * materialUnitCost * 100) / 100,
+      material_extended: Math.round(finalQuantity * materialUnitCost * 100) / 100,
       labor_unit_cost: laborUnitCost,
-      labor_extended: Math.round(Math.ceil(quantity) * totalLaborRate * 100) / 100,
+      labor_extended: Math.round(finalQuantity * totalLaborRate * 100) / 100,
 
       calculation_source: 'auto-scope',
-      rule_id: rule.id,
+      rule_id: String(rule.rule_id),  // FIXED: was id
       formula_used: rule.quantity_formula,
-      notes: rule.notes,
+      notes: rule.description || undefined,
     };
 
     result.line_items.push(lineItem);
   }
 
-  console.log(`✅ Auto-scope V2: ${result.rules_triggered}/${result.rules_evaluated} rules triggered, ${result.line_items.length} line items generated`);
+  console.log(`✅ Auto-scope V2 complete: ${result.rules_triggered}/${result.rules_evaluated} rules triggered, ${result.line_items.length} line items`);
 
   return result;
 }
@@ -438,87 +477,65 @@ export async function generateAutoScopeItemsV2(
 // FALLBACK RULES (when database unavailable)
 // ============================================================================
 
-function getFallbackRules(): AutoScopeRule[] {
+function getFallbackRules(): DbAutoScopeRule[] {
+  const now = new Date().toISOString();
   return [
     {
-      id: 'fallback-housewrap',
-      sku: 'TYVEK-HW-9X150',
-      product_name: 'Tyvek HomeWrap 9\' x 150\'',
-      category: 'water_barrier',
-      presentation_group: 'House Wrap & Accessories',
+      rule_id: 1,
+      rule_name: 'Tyvek House Wrap (Fallback)',
+      description: 'Fallback rule - 1350 SF coverage per roll',
+      material_category: 'water_barrier',
+      material_sku: 'TYVEK-HW-9X150',
+      quantity_formula: 'Math.ceil(facade_area_sqft / 1350)',
       unit: 'ROLL',
-      quantity_formula: 'Math.ceil(facade_sqft / 1350)',
-      trigger_conditions: [{ field: 'facade_sqft', operator: 'gt', value: 0 }],
-      display_order: 1,
-      is_active: true,
-      notes: 'Fallback rule - 1350 SF coverage per roll',
+      output_unit: 'ROLL',
+      size_description: null,
+      trigger_condition: { always: true },
+      presentation_group: 'siding',
+      group_order: 1,
+      item_order: 1,
+      priority: 1,
+      active: true,
+      created_at: now,
+      updated_at: now,
     },
     {
-      id: 'fallback-staples',
-      sku: 'ARROW-T50-3/8',
-      product_name: 'Arrow T50 Staples 3/8"',
-      category: 'fasteners',
-      presentation_group: 'Fasteners',
+      rule_id: 2,
+      rule_name: 'Siding Nails (Fallback)',
+      description: 'Fallback rule - 1 box per 100 SF',
+      material_category: 'fasteners',
+      material_sku: 'MAZE-SIDING-2.5',
+      quantity_formula: 'Math.ceil((facade_area_sqft - openings_area_sqft) / 100)',
       unit: 'BOX',
-      quantity_formula: 'Math.ceil(facade_sqft / 500)',
-      trigger_conditions: [{ field: 'facade_sqft', operator: 'gt', value: 0 }],
-      display_order: 2,
-      is_active: true,
-      notes: 'Fallback rule - 1 box per 500 SF',
+      output_unit: 'BOX',
+      size_description: null,
+      trigger_condition: { always: true },
+      presentation_group: 'fasteners',
+      group_order: 5,
+      item_order: 1,
+      priority: 1,
+      active: true,
+      created_at: now,
+      updated_at: now,
     },
     {
-      id: 'fallback-caulk',
-      sku: 'OSI-QUAD-10OZ',
-      product_name: 'OSI Quad Caulk 10oz',
-      category: 'accessories',
-      presentation_group: 'Caulk & Sealants',
+      rule_id: 3,
+      rule_name: 'Caulk (Fallback)',
+      description: 'Fallback rule - 1 tube per 25 LF',
+      material_category: 'accessories',
+      material_sku: 'OSI-QUAD-10OZ',
+      quantity_formula: 'Math.ceil(openings_perimeter_lf / 25)',
       unit: 'TUBE',
-      quantity_formula: 'Math.ceil(total_opening_perimeter_lf / 25)',
-      trigger_conditions: [{ field: 'total_opening_perimeter_lf', operator: 'gt', value: 0 }],
-      display_order: 3,
-      is_active: true,
-      notes: 'Fallback rule - 1 tube per 25 LF',
-    },
-    {
-      id: 'fallback-nails',
-      sku: 'MAZE-SIDING-2.5',
-      product_name: 'Maze Siding Nails 2.5"',
-      category: 'fasteners',
-      presentation_group: 'Fasteners',
-      unit: 'BOX',
-      quantity_formula: 'Math.ceil(net_siding_area_sqft / 100)',
-      trigger_conditions: [{ field: 'net_siding_area_sqft', operator: 'gt', value: 0 }],
-      display_order: 4,
-      is_active: true,
-      notes: 'Fallback rule - 1 lb box per 100 SF',
-    },
-    {
-      id: 'fallback-flashing',
-      sku: 'JH-HEAD-FLASH-10',
-      product_name: 'HardiFlashing 10\'',
-      category: 'flashing',
-      presentation_group: 'Flashing',
-      unit: 'PC',
-      quantity_formula: 'Math.ceil((window_head_lf + door_head_lf) / 10)',
-      trigger_conditions: [
-        { field: 'window_count', operator: 'gt', value: 0 }
-      ],
-      display_order: 5,
-      is_active: true,
-      notes: 'Fallback rule - head flashing for windows and doors',
-    },
-    {
-      id: 'fallback-primer',
-      sku: 'SW-PRIMER-GAL',
-      product_name: 'Sherwin-Williams Primer Gallon',
-      category: 'accessories',
-      presentation_group: 'Paint & Primer',
-      unit: 'GAL',
-      quantity_formula: 'Math.ceil(total_corner_lf / 100)',
-      trigger_conditions: [{ field: 'total_corner_lf', operator: 'gt', value: 0 }],
-      display_order: 6,
-      is_active: true,
-      notes: 'Fallback rule - touch-up primer for cut ends',
+      output_unit: 'TUBE',
+      size_description: null,
+      trigger_condition: { min_openings: 1 },
+      presentation_group: 'fasteners',
+      group_order: 5,
+      item_order: 2,
+      priority: 1,
+      active: true,
+      created_at: now,
+      updated_at: now,
     },
   ];
 }

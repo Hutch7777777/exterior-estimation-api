@@ -4,42 +4,6 @@
  */
 
 // ============================================================================
-// DATABASE TYPES (from siding_auto_scope_rules table)
-// ============================================================================
-
-export interface TriggerCondition {
-  field: string;
-  operator: 'gt' | 'gte' | 'lt' | 'lte' | 'eq' | 'neq' | 'exists' | 'not_exists';
-  value?: number | string | boolean;
-}
-
-export interface AutoScopeRule {
-  id: string;
-  sku: string;
-  product_name: string;
-  category: string;
-  presentation_group: string;
-  unit: string;
-
-  // Formula for quantity calculation (uses measurement context variables)
-  quantity_formula: string;
-
-  // When to apply this rule
-  trigger_conditions: TriggerCondition[] | null;
-
-  // Ordering
-  display_order: number;
-
-  // Status
-  is_active: boolean;
-
-  // Metadata
-  notes?: string;
-  created_at?: string;
-  updated_at?: string;
-}
-
-// ============================================================================
 // MEASUREMENT CONTEXT (flattened from various sources)
 // ============================================================================
 
@@ -112,41 +76,48 @@ export interface CadHoverMeasurements {
   id: string;
   extraction_id: string;
 
-  // Areas
+  // Areas - ACTUAL DB column names
+  facade_total_sqft?: number;
   facade_sqft?: number;
   gross_wall_area_sqft?: number;
+  net_siding_sqft?: number;
   net_siding_area_sqft?: number;
 
+  // Openings - pre-computed totals
+  openings_area_sqft?: number;
+  openings_count?: number;
+  openings_total_perimeter_lf?: number;
+
   // Windows
-  window_count?: number;
-  window_total_area_sqft?: number;
-  window_perimeter_lf?: number;
-  window_head_lf?: number;
-  window_sill_lf?: number;
-  window_jamb_lf?: number;
+  windows_count?: number;
+  windows_area_sqft?: number;
+  windows_perimeter_lf?: number;
+  windows_head_lf?: number;
+  windows_sill_lf?: number;
+  windows_jamb_lf?: number;
 
   // Doors
-  door_count?: number;
-  door_total_area_sqft?: number;
-  door_perimeter_lf?: number;
-  door_head_lf?: number;
-  door_jamb_lf?: number;
+  doors_count?: number;
+  doors_area_sqft?: number;
+  doors_perimeter_lf?: number;
+  doors_head_lf?: number;
+  doors_jamb_lf?: number;
 
   // Garages
-  garage_count?: number;
-  garage_total_area_sqft?: number;
-  garage_perimeter_lf?: number;
+  garages_count?: number;
+  garages_area_sqft?: number;
+  garages_perimeter_lf?: number;
 
-  // Corners
-  outside_corner_count?: number;
-  outside_corner_lf?: number;
-  inside_corner_count?: number;
-  inside_corner_lf?: number;
+  // Corners - ACTUAL DB column names
+  corners_outside_count?: number;
+  corners_outside_lf?: number;
+  corners_inside_count?: number;
+  corners_inside_lf?: number;
 
   // Gables
-  gable_count?: number;
-  gable_area_sqft?: number;
-  gable_rake_lf?: number;
+  gables_count?: number;
+  gables_area_sqft?: number;
+  gables_rake_lf?: number;
 
   // Other
   level_starter_lf?: number;
