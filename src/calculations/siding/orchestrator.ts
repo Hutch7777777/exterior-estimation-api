@@ -282,9 +282,12 @@ export interface AssignmentLineItem {
   material_extended: number;
   labor_unit_cost: number;
   labor_extended: number;
+  total_extended: number;
   calculation_source: 'assigned_material' | 'auto-scope';
   pricing_item_id?: string;
   detection_id?: string;
+  detection_ids?: string[];
+  detection_count?: number;
   notes?: string;
 }
 
@@ -304,8 +307,53 @@ export interface MaterialAssignmentResult {
     pricing_method: 'id-based';
     items_priced: number;
     items_missing: string[];
+    items_before_consolidation: number;
+    items_after_consolidation: number;
     warnings: Array<{ code: string; message: string }>;
   };
+}
+
+/**
+ * Consolidate line items by pricing_item_id (or SKU as fallback)
+ * Merges multiple items with the same product into a single line item
+ */
+function consolidateLineItems(lineItems: AssignmentLineItem[]): AssignmentLineItem[] {
+  const consolidated = new Map<string, AssignmentLineItem>();
+
+  for (const item of lineItems) {
+    const key = item.pricing_item_id || item.sku;
+
+    if (consolidated.has(key)) {
+      const existing = consolidated.get(key)!;
+      existing.quantity += item.quantity;
+      existing.material_extended += item.material_extended;
+      existing.labor_extended += item.labor_extended;
+      existing.total_extended += item.total_extended;
+
+      // Track all detection IDs for provenance
+      if (item.detection_ids) {
+        existing.detection_ids = [...(existing.detection_ids || []), ...item.detection_ids];
+      } else if (item.detection_id) {
+        existing.detection_ids = [...(existing.detection_ids || []), item.detection_id];
+      }
+      existing.detection_count = (existing.detection_count || 1) + 1;
+    } else {
+      consolidated.set(key, {
+        ...item,
+        detection_ids: item.detection_ids || (item.detection_id ? [item.detection_id] : []),
+        detection_count: 1
+      });
+    }
+  }
+
+  // Round all monetary values and return
+  return Array.from(consolidated.values()).map(item => ({
+    ...item,
+    quantity: Math.round(item.quantity * 100) / 100,
+    material_extended: Math.round(item.material_extended * 100) / 100,
+    labor_extended: Math.round(item.labor_extended * 100) / 100,
+    total_extended: Math.round(item.total_extended * 100) / 100
+  }));
 }
 
 /**
@@ -350,6 +398,8 @@ export async function calculateFromMaterialAssignments(
     // Calculate labor based on the material type
     const laborCost = calculateLaborForMaterial(pricing, quantity);
 
+    const totalExtended = Math.round((materialCost + laborCost) * 100) / 100;
+
     lineItems.push({
       description: pricing.product_name,
       sku: pricing.sku,
@@ -360,15 +410,27 @@ export async function calculateFromMaterialAssignments(
       material_extended: Math.round(materialCost * 100) / 100,
       labor_unit_cost: Number(pricing.base_labor_cost || 0),
       labor_extended: Math.round(laborCost * 100) / 100,
+      total_extended: totalExtended,
       calculation_source: 'assigned_material',
       pricing_item_id: assignment.pricing_item_id,
       detection_id: assignment.detection_id,
+      detection_ids: [assignment.detection_id],
+      detection_count: 1,
       notes: `From detection: ${assignment.quantity.toFixed(2)} ${assignment.unit}`,
     });
 
     totalMaterialCost += materialCost;
     totalLaborCost += laborCost;
   }
+
+  // Consolidate line items by pricing_item_id BEFORE adding auto-scope items
+  const itemsBeforeConsolidation = lineItems.length;
+  const consolidatedLineItems = consolidateLineItems(lineItems);
+  const itemsAfterConsolidation = consolidatedLineItems.length;
+
+  // Clear and replace with consolidated items
+  lineItems.length = 0;
+  lineItems.push(...consolidatedLineItems);
 
   // Add auto-scope items (house wrap, staples, etc.) based on facade area
   if (facadeSqft && facadeSqft > 0) {
@@ -384,6 +446,7 @@ export async function calculateFromMaterialAssignments(
         material_extended: 0,
         labor_unit_cost: 0,
         labor_extended: 0,
+        total_extended: 0,
         calculation_source: 'auto-scope',
         notes: item.notes,
       });
@@ -412,6 +475,8 @@ export async function calculateFromMaterialAssignments(
       pricing_method: 'id-based',
       items_priced: lineItems.filter(i => i.calculation_source === 'assigned_material').length,
       items_missing: missingItems,
+      items_before_consolidation: itemsBeforeConsolidation,
+      items_after_consolidation: itemsAfterConsolidation,
       warnings,
     },
   };
