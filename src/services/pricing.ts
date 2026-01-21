@@ -98,6 +98,128 @@ export function clearPricingCache(): void {
 }
 
 // ============================================================================
+// SKU-BASED PRICING LOOKUP (for auto-scope items)
+// ============================================================================
+
+/**
+ * Batch lookup for multiple SKUs with optional organization overrides
+ * Used by auto-scope V2 for SKU-based pricing
+ */
+export async function getPricingBySkus(
+  skus: string[],
+  organizationId?: string
+): Promise<Map<string, PricingItem>> {
+  const results = new Map<string, PricingItem>();
+
+  if (skus.length === 0) {
+    return results;
+  }
+
+  // First try to get from cache
+  const allPricing = await fetchPricingData();
+  const missingSkus: string[] = [];
+
+  for (const sku of skus) {
+    const cached = allPricing.get(sku);
+    if (cached) {
+      results.set(sku, cached);
+    } else {
+      missingSkus.push(sku);
+    }
+  }
+
+  // If all found in cache, apply organization overrides if needed
+  if (missingSkus.length === 0) {
+    if (organizationId) {
+      await applyOrganizationOverridesToSkus(results, organizationId);
+    }
+    return results;
+  }
+
+  // Fetch missing SKUs from database
+  if (isDatabaseConfigured() && missingSkus.length > 0) {
+    try {
+      const client = getSupabaseClient();
+      const { data, error } = await client
+        .from('pricing_items')
+        .select('*')
+        .in('sku', missingSkus);
+
+      if (!error && data) {
+        for (const item of data) {
+          results.set(item.sku, item as PricingItem);
+        }
+      }
+    } catch (err) {
+      console.error('❌ Error fetching pricing by SKUs:', err);
+    }
+  }
+
+  // Apply organization overrides if applicable
+  if (organizationId && results.size > 0) {
+    await applyOrganizationOverridesToSkus(results, organizationId);
+  }
+
+  console.log(`✅ Fetched pricing for ${results.size}/${skus.length} SKUs`);
+  return results;
+}
+
+/**
+ * Apply organization overrides to a map of SKU-based pricing
+ */
+async function applyOrganizationOverridesToSkus(
+  pricingMap: Map<string, PricingItem>,
+  organizationId: string
+): Promise<void> {
+  if (!isDatabaseConfigured()) return;
+
+  try {
+    const client = getSupabaseClient();
+
+    // Get IDs for items we have
+    const itemIds: string[] = [];
+    const skuToId = new Map<string, string>();
+
+    for (const [sku, item] of pricingMap) {
+      if (item.id) {
+        itemIds.push(item.id);
+        skuToId.set(item.id, sku);
+      }
+    }
+
+    if (itemIds.length === 0) return;
+
+    const { data: overrides } = await client
+      .from('organization_pricing_overrides')
+      .select('pricing_item_id, material_cost_override, labor_rate_override')
+      .eq('organization_id', organizationId)
+      .in('pricing_item_id', itemIds);
+
+    if (overrides && overrides.length > 0) {
+      for (const override of overrides) {
+        const sku = skuToId.get(override.pricing_item_id);
+        if (sku) {
+          const item = pricingMap.get(sku);
+          if (item) {
+            pricingMap.set(sku, {
+              ...item,
+              material_cost: override.material_cost_override ?? item.material_cost,
+              base_labor_cost: override.labor_rate_override ?? item.base_labor_cost,
+              total_labor_cost: override.labor_rate_override
+                ? calculateTotalLabor(override.labor_rate_override)
+                : item.total_labor_cost,
+            });
+          }
+        }
+      }
+      console.log(`✅ Applied ${overrides.length} organization overrides to SKU pricing`);
+    }
+  } catch (err) {
+    console.error('❌ Error applying organization overrides to SKUs:', err);
+  }
+}
+
+// ============================================================================
 // ID-BASED PRICING LOOKUP (for material_assignments)
 // ============================================================================
 

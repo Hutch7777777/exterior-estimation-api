@@ -6,7 +6,10 @@
 
 import { Router, Request, Response } from 'express';
 import { WebhookRequest, WebhookResponse, WebhookErrorResponse } from '../types/webhook';
-import { calculateSidingWithPricing, calculateFromMaterialAssignments } from '../calculations/siding';
+import {
+  calculateSidingWithPricing,
+  calculateWithAutoScopeV2
+} from '../calculations/siding';
 import {
   transformWebhookToCalculationRequest,
   transformCalculationToWebhookResponse
@@ -41,20 +44,17 @@ router.post('/siding-estimator', async (req: Request, res: Response) => {
     const markupRate = webhookRequest.markup_rate || 0.15;
 
     // =========================================================================
-    // PATH 1: ID-Based Pricing (material_assignments from Detection Editor)
+    // PATH 1: ID-Based Pricing with Auto-Scope V2 (material_assignments from Detection Editor)
     // =========================================================================
     if (webhookRequest.material_assignments && webhookRequest.material_assignments.length > 0) {
-      console.log(`📥 Webhook received (ID-based): project_id=${webhookRequest.project_id}, assignments=${webhookRequest.material_assignments.length}`);
+      console.log(`📥 Webhook received (V2 hybrid): project_id=${webhookRequest.project_id}, assignments=${webhookRequest.material_assignments.length}`);
 
-      // Calculate facade area for auto-scope items
-      const facadeSqft = webhookRequest.measurements?.facade_sqft ||
-                         webhookRequest.measurements?.gross_wall_area_sqft ||
-                         0;
-
-      const result = await calculateFromMaterialAssignments(
+      // Use V2 orchestrator which combines material assignments with auto-scope
+      const result = await calculateWithAutoScopeV2(
         webhookRequest.material_assignments,
+        webhookRequest.extraction_id,
+        webhookRequest.measurements,
         webhookRequest.organization_id,
-        facadeSqft,
         markupRate
       );
 
@@ -76,21 +76,28 @@ router.post('/siding-estimator', async (req: Request, res: Response) => {
           sku: item.sku,
           notes: item.notes,
           calculation_source: item.calculation_source,
+          presentation_group: item.presentation_group,
         })),
         totals: result.totals,
         metadata: {
-          version: 'siding-calc-v5.0.0-id-based',
+          version: 'siding-calc-v6.0.0-hybrid',
           timestamp: new Date().toISOString(),
-          source: 'material_assignments',
+          source: 'material_assignments_with_autoscope',
           pricing_snapshot: result.metadata.pricing_method,
           skus_found: result.metadata.items_priced,
           skus_missing: result.metadata.items_missing,
           warnings: result.metadata.warnings,
+          // V2 specific metadata
+          assigned_items_count: result.metadata.assigned_items_count,
+          auto_scope_items_count: result.metadata.auto_scope_items_count,
+          measurement_source: result.metadata.measurement_source,
+          rules_evaluated: result.metadata.rules_evaluated,
+          rules_triggered: result.metadata.rules_triggered,
         },
       };
 
       const duration = Date.now() - startTime;
-      console.log(`✅ Webhook complete (ID-based): project_id=${webhookRequest.project_id}, items=${response.line_items.length}, duration=${duration}ms`);
+      console.log(`✅ Webhook complete (V2 hybrid): project_id=${webhookRequest.project_id}, assigned=${result.metadata.assigned_items_count}, auto_scope=${result.metadata.auto_scope_items_count}, duration=${duration}ms`);
 
       res.json(response);
       return;
@@ -164,18 +171,16 @@ router.post('/calculate-siding', async (req: Request, res: Response) => {
 
     const markupRate = webhookRequest.markup_rate || 0.15;
 
-    // PATH 1: ID-Based Pricing
+    // PATH 1: ID-Based Pricing with Auto-Scope V2
     if (webhookRequest.material_assignments && webhookRequest.material_assignments.length > 0) {
-      console.log(`📥 Webhook (alias, ID-based) received: project_id=${webhookRequest.project_id}, assignments=${webhookRequest.material_assignments.length}`);
+      console.log(`📥 Webhook (alias, V2 hybrid) received: project_id=${webhookRequest.project_id}, assignments=${webhookRequest.material_assignments.length}`);
 
-      const facadeSqft = webhookRequest.measurements?.facade_sqft ||
-                         webhookRequest.measurements?.gross_wall_area_sqft ||
-                         0;
-
-      const result = await calculateFromMaterialAssignments(
+      // Use V2 orchestrator which combines material assignments with auto-scope
+      const result = await calculateWithAutoScopeV2(
         webhookRequest.material_assignments,
+        webhookRequest.extraction_id,
+        webhookRequest.measurements,
         webhookRequest.organization_id,
-        facadeSqft,
         markupRate
       );
 
@@ -196,21 +201,27 @@ router.post('/calculate-siding', async (req: Request, res: Response) => {
           sku: item.sku,
           notes: item.notes,
           calculation_source: item.calculation_source,
+          presentation_group: item.presentation_group,
         })),
         totals: result.totals,
         metadata: {
-          version: 'siding-calc-v5.0.0-id-based',
+          version: 'siding-calc-v6.0.0-hybrid',
           timestamp: new Date().toISOString(),
-          source: 'material_assignments',
+          source: 'material_assignments_with_autoscope',
           pricing_snapshot: result.metadata.pricing_method,
           skus_found: result.metadata.items_priced,
           skus_missing: result.metadata.items_missing,
           warnings: result.metadata.warnings,
+          assigned_items_count: result.metadata.assigned_items_count,
+          auto_scope_items_count: result.metadata.auto_scope_items_count,
+          measurement_source: result.metadata.measurement_source,
+          rules_evaluated: result.metadata.rules_evaluated,
+          rules_triggered: result.metadata.rules_triggered,
         },
       };
 
       const duration = Date.now() - startTime;
-      console.log(`✅ Webhook (alias, ID-based) complete: project_id=${webhookRequest.project_id}, items=${response.line_items.length}, duration=${duration}ms`);
+      console.log(`✅ Webhook (alias, V2 hybrid) complete: project_id=${webhookRequest.project_id}, assigned=${result.metadata.assigned_items_count}, auto_scope=${result.metadata.auto_scope_items_count}, duration=${duration}ms`);
 
       res.json(response);
       return;

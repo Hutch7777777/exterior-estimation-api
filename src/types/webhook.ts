@@ -142,6 +142,9 @@ export interface WebhookLineItem {
   notes?: string;
   calculation_source?: string;
   low_confidence?: boolean;
+
+  // V2 fields
+  presentation_group?: string;
 }
 
 export interface WebhookTotals {
@@ -177,6 +180,13 @@ export interface WebhookResponse {
     skus_found: number;
     skus_missing: string[];
     warnings: Array<{ code: string; message: string }>;
+
+    // V2 specific metadata (auto-scope)
+    assigned_items_count?: number;
+    auto_scope_items_count?: number;
+    measurement_source?: 'database' | 'webhook' | 'fallback';
+    rules_evaluated?: number;
+    rules_triggered?: number;
   };
 }
 
