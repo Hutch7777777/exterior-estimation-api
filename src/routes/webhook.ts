@@ -79,6 +79,12 @@ router.post('/siding-estimator', async (req: Request, res: Response) => {
           presentation_group: item.presentation_group,
         })),
         totals: result.totals,
+
+        // V2 Mike Skjei Methodology - Pass through detailed breakdowns
+        labor: result.labor,
+        overhead: result.overhead,
+        project_totals: result.project_totals,
+
         metadata: {
           version: 'siding-calc-v6.0.0-hybrid',
           timestamp: new Date().toISOString(),
@@ -93,6 +99,11 @@ router.post('/siding-estimator', async (req: Request, res: Response) => {
           measurement_source: result.metadata.measurement_source,
           rules_evaluated: result.metadata.rules_evaluated,
           rules_triggered: result.metadata.rules_triggered,
+          // V2 Mike Skjei calculation metadata
+          calculation_method: result.metadata.calculation_method,
+          markup_rate: result.metadata.markup_rate,
+          crew_size: result.metadata.crew_size,
+          estimated_weeks: result.metadata.estimated_weeks,
         },
       };
 
@@ -204,6 +215,12 @@ router.post('/calculate-siding', async (req: Request, res: Response) => {
           presentation_group: item.presentation_group,
         })),
         totals: result.totals,
+
+        // V2 Mike Skjei Methodology - Pass through detailed breakdowns
+        labor: result.labor,
+        overhead: result.overhead,
+        project_totals: result.project_totals,
+
         metadata: {
           version: 'siding-calc-v6.0.0-hybrid',
           timestamp: new Date().toISOString(),
@@ -217,6 +234,11 @@ router.post('/calculate-siding', async (req: Request, res: Response) => {
           measurement_source: result.metadata.measurement_source,
           rules_evaluated: result.metadata.rules_evaluated,
           rules_triggered: result.metadata.rules_triggered,
+          // V2 Mike Skjei calculation metadata
+          calculation_method: result.metadata.calculation_method,
+          markup_rate: result.metadata.markup_rate,
+          crew_size: result.metadata.crew_size,
+          estimated_weeks: result.metadata.estimated_weeks,
         },
       };
 

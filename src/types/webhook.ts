@@ -157,6 +157,69 @@ export interface WebhookTotals {
   total: number;
 }
 
+// ============================================================================
+// V2 MIKE SKJEI METHODOLOGY TYPES
+// ============================================================================
+
+export interface WebhookLaborLineItem {
+  rate_id: string;
+  rate_name: string;
+  description: string;
+  quantity: number;        // In squares (SQ)
+  unit: string;            // 'SQ' = 100 SF
+  unit_cost: number;       // $/SQ
+  total_cost: number;      // quantity * unit_cost
+  notes?: string;
+}
+
+export interface WebhookLaborSection {
+  installation_items: WebhookLaborLineItem[];
+  installation_subtotal: number;
+}
+
+export interface WebhookOverheadLineItem {
+  cost_id: string;
+  cost_name: string;
+  description: string;
+  category: string;        // 'labor_burden', 'equipment', 'setup', etc.
+  quantity?: number;
+  unit?: string;
+  rate?: number;
+  amount: number;
+  calculation_type: string; // 'percentage', 'calculated', 'flat_fee', 'per_day'
+  notes?: string;
+}
+
+export interface WebhookOverheadSection {
+  items: WebhookOverheadLineItem[];
+  subtotal: number;
+}
+
+export interface WebhookProjectTotals {
+  // Materials
+  material_cost: number;
+  material_markup_rate: number;      // 0.26 (26%)
+  material_markup_amount: number;
+  material_total: number;
+
+  // Labor breakdown
+  installation_labor_subtotal: number;
+  overhead_subtotal: number;
+  labor_cost_before_markup: number;  // installation + overhead
+  labor_markup_rate: number;         // 0.26 (26%)
+  labor_markup_amount: number;
+  labor_total: number;
+
+  // Final totals
+  subtotal: number;                  // material_total + labor_total
+  project_insurance: number;         // $24.38 per $1,000
+  grand_total: number;               // subtotal + project_insurance
+}
+
+// ============================================================================
+// WEBHOOK RESPONSE
+// ============================================================================
+
 export interface WebhookResponse {
   success: boolean;
   trade: 'siding';
@@ -168,8 +231,13 @@ export interface WebhookResponse {
   // Line items for Excel
   line_items: WebhookLineItem[];
 
-  // Totals
+  // Totals (legacy format for backward compatibility)
   totals: WebhookTotals;
+
+  // V2 Mike Skjei Methodology - Detailed breakdowns
+  labor?: WebhookLaborSection;
+  overhead?: WebhookOverheadSection;
+  project_totals?: WebhookProjectTotals;
 
   // Metadata
   metadata: {
@@ -187,6 +255,12 @@ export interface WebhookResponse {
     measurement_source?: 'database' | 'webhook' | 'fallback';
     rules_evaluated?: number;
     rules_triggered?: number;
+
+    // V2 Mike Skjei metadata
+    calculation_method?: string;      // 'mike_skjei_v1'
+    markup_rate?: number;             // 0.26
+    crew_size?: number;               // Default: 4
+    estimated_weeks?: number;         // Default: 2
   };
 }
 
