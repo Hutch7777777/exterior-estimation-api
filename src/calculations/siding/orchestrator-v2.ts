@@ -32,11 +32,14 @@ export interface CombinedLineItem {
   material_extended: number;
   labor_unit_cost: number;
   labor_extended: number;
+  total_extended: number;
 
   // Metadata
   calculation_source: 'assigned_material' | 'auto-scope';
   pricing_item_id?: string;
   detection_id?: string;
+  detection_ids?: string[];
+  detection_count?: number;
   rule_id?: string;
   formula_used?: string;
   notes?: string;
@@ -60,6 +63,8 @@ export interface V2CalculationResult {
     auto_scope_items_count: number;
     items_priced: number;
     items_missing: string[];
+    items_before_consolidation: number;
+    items_after_consolidation: number;
     measurement_source: 'database' | 'webhook' | 'fallback';
     rules_evaluated: number;
     rules_triggered: number;
@@ -111,6 +116,7 @@ export async function calculateWithAutoScopeV2(
       const quantity = calculateMaterialQuantity(assignment, pricing);
       const materialCost = quantity * Number(pricing.material_cost || 0);
       const laborCost = calculateLaborForMaterial(pricing, quantity);
+      const totalExtended = Math.round((materialCost + laborCost) * 100) / 100;
 
       lineItems.push({
         description: pricing.product_name,
@@ -124,10 +130,13 @@ export async function calculateWithAutoScopeV2(
         material_extended: Math.round(materialCost * 100) / 100,
         labor_unit_cost: Number(pricing.base_labor_cost || 0),
         labor_extended: Math.round(laborCost * 100) / 100,
+        total_extended: totalExtended,
 
         calculation_source: 'assigned_material',
         pricing_item_id: assignment.pricing_item_id,
         detection_id: assignment.detection_id,
+        detection_ids: [assignment.detection_id],
+        detection_count: 1,
         notes: `From detection: ${assignment.quantity.toFixed(2)} ${assignment.unit}`,
       });
 
@@ -146,8 +155,23 @@ export async function calculateWithAutoScopeV2(
     organizationId
   );
 
+  // =========================================================================
+  // CONSOLIDATE ASSIGNED MATERIALS BEFORE ADDING AUTO-SCOPE
+  // =========================================================================
+  const itemsBeforeConsolidation = lineItems.length;
+  const consolidatedAssigned = consolidateLineItems(lineItems);
+  const itemsAfterConsolidation = consolidatedAssigned.length;
+
+  console.log(`📦 Consolidated ${itemsBeforeConsolidation} line items → ${itemsAfterConsolidation}`);
+
+  // Replace with consolidated items
+  lineItems.length = 0;
+  lineItems.push(...consolidatedAssigned);
+
   // Add auto-scope line items
   for (const autoItem of autoScopeResult.line_items) {
+    const autoTotalExtended = Math.round((autoItem.material_extended + autoItem.labor_extended) * 100) / 100;
+
     lineItems.push({
       description: autoItem.description,
       sku: autoItem.sku,
@@ -160,6 +184,7 @@ export async function calculateWithAutoScopeV2(
       material_extended: autoItem.material_extended,
       labor_unit_cost: autoItem.labor_unit_cost,
       labor_extended: autoItem.labor_extended,
+      total_extended: autoTotalExtended,
 
       calculation_source: 'auto-scope',
       rule_id: autoItem.rule_id,
@@ -205,6 +230,8 @@ export async function calculateWithAutoScopeV2(
       auto_scope_items_count: autoScopeCount,
       items_priced: assignedCount + autoScopeCount,
       items_missing: missingItems,
+      items_before_consolidation: itemsBeforeConsolidation,
+      items_after_consolidation: itemsAfterConsolidation,
       measurement_source: autoScopeResult.measurement_source,
       rules_evaluated: autoScopeResult.rules_evaluated,
       rules_triggered: autoScopeResult.rules_triggered,
@@ -216,6 +243,49 @@ export async function calculateWithAutoScopeV2(
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
+
+/**
+ * Consolidate line items by pricing_item_id (or SKU as fallback)
+ * Merges multiple items with the same product into a single line item
+ */
+function consolidateLineItems(lineItems: CombinedLineItem[]): CombinedLineItem[] {
+  const consolidated = new Map<string, CombinedLineItem>();
+
+  for (const item of lineItems) {
+    const key = item.pricing_item_id || item.sku;
+
+    if (consolidated.has(key)) {
+      const existing = consolidated.get(key)!;
+      existing.quantity += item.quantity;
+      existing.material_extended += item.material_extended;
+      existing.labor_extended += item.labor_extended;
+      existing.total_extended += item.total_extended;
+
+      // Track all detection IDs for provenance
+      if (item.detection_ids) {
+        existing.detection_ids = [...(existing.detection_ids || []), ...item.detection_ids];
+      } else if (item.detection_id) {
+        existing.detection_ids = [...(existing.detection_ids || []), item.detection_id];
+      }
+      existing.detection_count = (existing.detection_count || 1) + 1;
+    } else {
+      consolidated.set(key, {
+        ...item,
+        detection_ids: item.detection_ids || (item.detection_id ? [item.detection_id] : []),
+        detection_count: 1
+      });
+    }
+  }
+
+  // Round all monetary values and return
+  return Array.from(consolidated.values()).map(item => ({
+    ...item,
+    quantity: Math.round(item.quantity * 100) / 100,
+    material_extended: Math.round(item.material_extended * 100) / 100,
+    labor_extended: Math.round(item.labor_extended * 100) / 100,
+    total_extended: Math.round(item.total_extended * 100) / 100
+  }));
+}
 
 /**
  * Calculate material quantity based on assignment and pricing info
