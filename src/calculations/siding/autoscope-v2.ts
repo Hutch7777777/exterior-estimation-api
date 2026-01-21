@@ -106,92 +106,157 @@ export function buildMeasurementContext(
   const db: any = dbMeasurements || {};
   const wh: any = webhookMeasurements || {};
 
-  // Helper to get value from db first, then webhook
-  const get = (dbKey: string, whKey?: string, fallback: number = 0): number => {
-    return Number(db[dbKey] || wh[whKey || dbKey] || fallback);
+  // Helper to safely get numeric value
+  const num = (val: any, fallback: number = 0): number => {
+    const n = Number(val);
+    return isNaN(n) ? fallback : n;
   };
+
+  // ==========================================================================
+  // ACTUAL DATABASE COLUMN NAMES (from cad_hover_measurements table):
+  // - facade_total_sqft
+  // - net_siding_sqft
+  // - openings_area_sqft (pre-computed total)
+  // - openings_count (pre-computed total)
+  // - openings_total_perimeter_lf (pre-computed total)
+  // - corners_outside_count
+  // - corners_inside_count
+  // - level_starter_lf
+  // - avg_wall_height_ft
+  // ==========================================================================
+
+  // Primary areas - map actual DB column names
+  const facade_sqft = num(db.facade_total_sqft) || num(db.facade_sqft) ||
+                      num(wh.facade_sqft) || num(wh.gross_wall_area_sqft) || 0;
+
+  const net_siding_area_sqft = num(db.net_siding_sqft) || num(db.net_siding_area_sqft) ||
+                               num(wh.net_siding_area_sqft) || num(wh.net_wall_area_sqft) || 0;
+
+  // Openings - DB has pre-computed totals, webhook has nested objects
+  const openings_area_sqft = num(db.openings_area_sqft) ||
+    (num(wh.windows?.total_area_sqft) + num(wh.doors?.total_area_sqft) + num(wh.garages?.total_area_sqft));
+
+  const openings_count = num(db.openings_count) ||
+    (num(wh.windows?.count) + num(wh.doors?.count) + num(wh.garages?.count));
+
+  const openings_perimeter_lf = num(db.openings_total_perimeter_lf) ||
+    (num(wh.windows?.perimeter_lf) + num(wh.doors?.perimeter_lf) + num(wh.garages?.perimeter_lf));
+
+  // Corners - map actual DB column names (corners_outside_count, not outside_corner_count)
+  const outside_corner_count = num(db.corners_outside_count) || num(db.outside_corner_count) ||
+                               num(wh.outside_corners?.count) || 0;
+
+  const inside_corner_count = num(db.corners_inside_count) || num(db.inside_corner_count) ||
+                              num(wh.inside_corners?.count) || 0;
+
+  // Other measurements
+  const level_starter_lf = num(db.level_starter_lf) || num(wh.level_starter_lf) || 0;
+  const avg_wall_height_ft = num(db.avg_wall_height_ft) || num(wh.avg_wall_height_ft) || 10;
+
+  // Individual opening breakdowns (from webhook nested objects)
+  const window_count = num(db.window_count) || num(wh.windows?.count) || 0;
+  const window_area_sqft = num(db.window_total_area_sqft) || num(wh.windows?.total_area_sqft) || 0;
+  const window_perimeter_lf = num(db.window_perimeter_lf) || num(wh.windows?.perimeter_lf) || 0;
+  const window_head_lf = num(db.window_head_lf) || num(wh.windows?.head_lf) || 0;
+  const window_sill_lf = num(db.window_sill_lf) || num(wh.windows?.sill_lf) || 0;
+  const window_jamb_lf = num(db.window_jamb_lf) || num(wh.windows?.jamb_lf) || 0;
+
+  const door_count = num(db.door_count) || num(wh.doors?.count) || 0;
+  const door_area_sqft = num(db.door_total_area_sqft) || num(wh.doors?.total_area_sqft) || 0;
+  const door_perimeter_lf = num(db.door_perimeter_lf) || num(wh.doors?.perimeter_lf) || 0;
+  const door_head_lf = num(db.door_head_lf) || num(wh.doors?.head_lf) || 0;
+  const door_jamb_lf = num(db.door_jamb_lf) || num(wh.doors?.jamb_lf) || 0;
+
+  const garage_count = num(db.garage_count) || num(wh.garages?.count) || 0;
+  const garage_area_sqft = num(db.garage_total_area_sqft) || num(wh.garages?.total_area_sqft) || 0;
+  const garage_perimeter_lf = num(db.garage_perimeter_lf) || num(wh.garages?.perimeter_lf) || 0;
+
+  // Corner LF (not always available)
+  const outside_corner_lf = num(db.outside_corner_lf) || num(wh.outside_corners?.total_lf) || 0;
+  const inside_corner_lf = num(db.inside_corner_lf) || num(wh.inside_corners?.total_lf) || 0;
+
+  // Gables
+  const gable_count = num(db.gable_count) || num(wh.gables?.count) || 0;
+  const gable_area_sqft = num(db.gable_area_sqft) || num(wh.gables?.area_sqft) || 0;
+  const gable_rake_lf = num(db.gable_rake_lf) || num(wh.gables?.rake_lf) || 0;
+
+  // Compute facade perimeter (area / height)
+  const facade_perimeter_lf = avg_wall_height_ft > 0 ? facade_sqft / avg_wall_height_ft : 0;
 
   const ctx: MeasurementContext = {
     // Primary areas
-    facade_sqft: get('facade_sqft', 'facade_sqft') || get('gross_wall_area_sqft', 'gross_wall_area_sqft'),
-    gross_wall_area_sqft: get('gross_wall_area_sqft', 'gross_wall_area_sqft') || get('facade_sqft', 'facade_sqft'),
-    net_siding_area_sqft: get('net_siding_area_sqft', 'net_siding_area_sqft') || get('net_wall_area_sqft', 'net_wall_area_sqft'),
+    facade_sqft,
+    gross_wall_area_sqft: facade_sqft,
+    net_siding_area_sqft,
 
-    // Windows (db uses flat fields, webhook uses nested objects)
-    window_count: get('window_count') || Number(wh.windows?.count || 0),
-    window_area_sqft: get('window_total_area_sqft') || Number(wh.windows?.total_area_sqft || 0),
-    window_perimeter_lf: get('window_perimeter_lf') || Number(wh.windows?.perimeter_lf || 0),
-    window_head_lf: get('window_head_lf') || Number(wh.windows?.head_lf || 0),
-    window_sill_lf: get('window_sill_lf') || Number(wh.windows?.sill_lf || 0),
-    window_jamb_lf: get('window_jamb_lf') || Number(wh.windows?.jamb_lf || 0),
+    // Windows
+    window_count,
+    window_area_sqft,
+    window_perimeter_lf,
+    window_head_lf,
+    window_sill_lf,
+    window_jamb_lf,
 
     // Doors
-    door_count: get('door_count') || Number(wh.doors?.count || 0),
-    door_area_sqft: get('door_total_area_sqft') || Number(wh.doors?.total_area_sqft || 0),
-    door_perimeter_lf: get('door_perimeter_lf') || Number(wh.doors?.perimeter_lf || 0),
-    door_head_lf: get('door_head_lf') || Number(wh.doors?.head_lf || 0),
-    door_jamb_lf: get('door_jamb_lf') || Number(wh.doors?.jamb_lf || 0),
+    door_count,
+    door_area_sqft,
+    door_perimeter_lf,
+    door_head_lf,
+    door_jamb_lf,
 
     // Garages
-    garage_count: get('garage_count') || Number(wh.garages?.count || 0),
-    garage_area_sqft: get('garage_total_area_sqft') || Number(wh.garages?.total_area_sqft || 0),
-    garage_perimeter_lf: get('garage_perimeter_lf') || Number(wh.garages?.perimeter_lf || 0),
+    garage_count,
+    garage_area_sqft,
+    garage_perimeter_lf,
 
     // Corners
-    outside_corner_count: get('outside_corner_count') || Number(wh.outside_corners?.count || 0),
-    outside_corner_lf: get('outside_corner_lf') || Number(wh.outside_corners?.total_lf || 0),
-    inside_corner_count: get('inside_corner_count') || Number(wh.inside_corners?.count || 0),
-    inside_corner_lf: get('inside_corner_lf') || Number(wh.inside_corners?.total_lf || 0),
+    outside_corner_count,
+    outside_corner_lf,
+    inside_corner_count,
+    inside_corner_lf,
 
     // Gables
-    gable_count: get('gable_count') || Number(wh.gables?.count || 0),
-    gable_area_sqft: get('gable_area_sqft') || Number(wh.gables?.area_sqft || 0),
-    gable_rake_lf: get('gable_rake_lf') || Number(wh.gables?.rake_lf || 0),
+    gable_count,
+    gable_area_sqft,
+    gable_rake_lf,
 
     // Other
-    level_starter_lf: get('level_starter_lf'),
-    avg_wall_height_ft: get('avg_wall_height_ft', 'avg_wall_height_ft', 10),
+    level_starter_lf,
+    avg_wall_height_ft,
 
-    // Computed helpers (will be calculated below)
-    total_opening_perimeter_lf: 0,
-    total_corner_lf: 0,
-    total_openings_area_sqft: 0,
-    total_openings_count: 0,
+    // Computed helpers
+    total_opening_perimeter_lf: openings_perimeter_lf,
+    total_corner_lf: outside_corner_lf + inside_corner_lf,
+    total_openings_area_sqft: openings_area_sqft,
+    total_openings_count: openings_count,
 
-    // ALIASES for database formula compatibility (will be set below)
-    facade_area_sqft: 0,
-    openings_area_sqft: 0,
-    outside_corners_count: 0,
-    inside_corners_count: 0,
-    openings_perimeter_lf: 0,
-    openings_count: 0,
-    facade_perimeter_lf: 0,
-    facade_height_ft: 0,
+    // =======================================================================
+    // ALIASES for database formula compatibility
+    // These match the variable names used in siding_auto_scope_rules formulas
+    // =======================================================================
+    facade_area_sqft: facade_sqft,
+    openings_area_sqft: openings_area_sqft,
+    outside_corners_count: outside_corner_count,
+    inside_corners_count: inside_corner_count,
+    openings_perimeter_lf: openings_perimeter_lf,
+    openings_count: openings_count,
+    facade_perimeter_lf: facade_perimeter_lf,
+    facade_height_ft: avg_wall_height_ft,
   };
 
-  // Calculate computed fields
-  ctx.total_opening_perimeter_lf =
-    ctx.window_perimeter_lf + ctx.door_perimeter_lf + ctx.garage_perimeter_lf;
-  ctx.total_corner_lf = ctx.outside_corner_lf + ctx.inside_corner_lf;
-  ctx.total_openings_area_sqft =
-    ctx.window_area_sqft + ctx.door_area_sqft + ctx.garage_area_sqft;
-  ctx.total_openings_count =
-    ctx.window_count + ctx.door_count + ctx.garage_count;
-
-  // Set ALIASES for database formula compatibility
-  ctx.facade_area_sqft = ctx.facade_sqft;
-  ctx.openings_area_sqft = ctx.total_openings_area_sqft;
-  ctx.outside_corners_count = ctx.outside_corner_count;
-  ctx.inside_corners_count = ctx.inside_corner_count;
-  ctx.openings_perimeter_lf = ctx.total_opening_perimeter_lf;
-  ctx.openings_count = ctx.total_openings_count;
-  ctx.facade_height_ft = ctx.avg_wall_height_ft;
-
-  // Estimate facade perimeter from area and height (perimeter = area / height)
-  // This is an approximation; actual perimeter would be more accurate from direct measurement
-  ctx.facade_perimeter_lf = ctx.avg_wall_height_ft > 0
-    ? ctx.facade_sqft / ctx.avg_wall_height_ft
-    : 0;
+  // Debug logging
+  console.log(`📊 MeasurementContext built:`, {
+    facade_area_sqft: ctx.facade_area_sqft,
+    net_siding_area_sqft: ctx.net_siding_area_sqft,
+    openings_area_sqft: ctx.openings_area_sqft,
+    openings_count: ctx.openings_count,
+    openings_perimeter_lf: ctx.openings_perimeter_lf,
+    outside_corners_count: ctx.outside_corners_count,
+    inside_corners_count: ctx.inside_corners_count,
+    level_starter_lf: ctx.level_starter_lf,
+    facade_height_ft: ctx.facade_height_ft,
+    facade_perimeter_lf: ctx.facade_perimeter_lf,
+  });
 
   return ctx;
 }
