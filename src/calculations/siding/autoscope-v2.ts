@@ -409,7 +409,7 @@ export async function generateAutoScopeItemsV2(
   const triggeredRules: Array<{ rule: DbAutoScopeRule; quantity: number }> = [];
 
   // Siding-related material categories to skip when user has siding assignments
-  const SIDING_MATERIAL_CATEGORIES = ['siding', 'lap_siding', 'shingle_siding', 'panel_siding', 'vertical_siding'];
+  const SIDING_MATERIAL_CATEGORIES = ['siding', 'siding_panels', 'lap_siding', 'shingle_siding', 'panel_siding', 'vertical_siding'];
 
   for (const rule of rules) {
     // Skip siding panel rules if material_assignments already cover siding
