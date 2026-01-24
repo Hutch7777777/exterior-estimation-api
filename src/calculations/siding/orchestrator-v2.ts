@@ -113,6 +113,7 @@ export interface CombinedLineItem {
   unit: string;
   category: string;
   presentation_group: string;
+  item_order?: number;  // Display order within presentation group (higher = bottom)
 
   // Pricing
   material_unit_cost: number;
@@ -491,13 +492,18 @@ export async function calculateWithAutoScopeV2(
         console.log(`   📐 Squares for labor: ${assignment.quantity} SF / 100 = ${squaresForLabor.toFixed(2)} SQ`);
       }
 
+      // Get consistent presentation_group and item_order
+      const presentationGroup = getPresentationGroup(pricing.category);
+      const itemOrder = getItemOrder(presentationGroup, pricing.category);
+
       lineItems.push({
         description: pricing.product_name,
         sku: pricing.sku,
         quantity,
         unit: pricing.unit,
         category: pricing.category || assignment.detection_class,
-        presentation_group: getPresentationGroup(pricing.category),
+        presentation_group: presentationGroup,
+        item_order: itemOrder,
 
         material_unit_cost: Number(pricing.material_cost || 0),
         material_extended: materialExtended,
@@ -557,13 +563,19 @@ export async function calculateWithAutoScopeV2(
 
   // Add auto-scope line items
   for (const autoItem of autoScopeResult.line_items) {
+    // Normalize presentation_group to consistent capitalized format
+    const normalizedGroup = normalizePresentationGroup(autoItem.presentation_group);
+    // Get item_order (higher = appears at bottom of section)
+    const itemOrder = getItemOrder(normalizedGroup, autoItem.category);
+
     lineItems.push({
       description: autoItem.description,
       sku: autoItem.sku,
       quantity: autoItem.quantity,
       unit: autoItem.unit,
       category: autoItem.category,
-      presentation_group: autoItem.presentation_group,
+      presentation_group: normalizedGroup,
+      item_order: itemOrder,
 
       material_unit_cost: autoItem.material_unit_cost,
       material_extended: autoItem.material_extended,
@@ -765,6 +777,10 @@ function getPresentationGroup(category?: string): string {
   const groupMap: Record<string, string> = {
     'siding': 'Siding',
     'lap_siding': 'Siding',
+    'siding_panels': 'Siding',
+    'shingle_siding': 'Siding',
+    'panel_siding': 'Siding',
+    'vertical_siding': 'Siding',
     'trim': 'Trim',
     'corner': 'Corners',
     'corners': 'Corners',
@@ -772,9 +788,59 @@ function getPresentationGroup(category?: string): string {
     'fasteners': 'Fasteners',
     'accessories': 'Accessories',
     'water_barrier': 'House Wrap & Accessories',
+    'house_wrap': 'House Wrap & Accessories',
+    'housewrap': 'House Wrap & Accessories',
     'caulk': 'Caulk & Sealants',
     'paint': 'Paint & Primer',
   };
 
   return groupMap[category?.toLowerCase() || ''] || 'Other Materials';
+}
+
+/**
+ * Normalize presentation_group to consistent capitalized format
+ * This ensures both material_assignments and auto-scope items use the same group names
+ */
+function normalizePresentationGroup(group?: string): string {
+  const normalizeMap: Record<string, string> = {
+    'siding': 'Siding',
+    'trim': 'Trim',
+    'corners': 'Corners',
+    'corner': 'Corners',
+    'flashing': 'Flashing',
+    'fasteners': 'Fasteners',
+    'accessories': 'Accessories',
+    'house wrap & accessories': 'House Wrap & Accessories',
+    'house wrap': 'House Wrap & Accessories',
+    'housewrap': 'House Wrap & Accessories',
+    'water_barrier': 'House Wrap & Accessories',
+    'caulk & sealants': 'Caulk & Sealants',
+    'caulk': 'Caulk & Sealants',
+    'paint & primer': 'Paint & Primer',
+    'paint': 'Paint & Primer',
+    'other materials': 'Other Materials',
+  };
+
+  const lowered = group?.toLowerCase() || '';
+  return normalizeMap[lowered] || group || 'Other Materials';
+}
+
+/**
+ * Get item_order for a presentation group
+ * Higher values appear at the bottom of the group in Excel output
+ */
+function getItemOrder(presentationGroup: string, category?: string): number {
+  // House Wrap / Tyvek items should appear at bottom of their section
+  if (presentationGroup === 'House Wrap & Accessories') {
+    return 99;
+  }
+
+  // Water barrier items within Siding group should also appear at bottom
+  const lowerCategory = category?.toLowerCase() || '';
+  if (lowerCategory === 'water_barrier' || lowerCategory === 'house_wrap' || lowerCategory === 'housewrap') {
+    return 99;
+  }
+
+  // Default order (items appear at top/middle)
+  return 10;
 }
