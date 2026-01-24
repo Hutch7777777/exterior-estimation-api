@@ -563,8 +563,14 @@ export async function calculateWithAutoScopeV2(
 
   // Add auto-scope line items
   for (const autoItem of autoScopeResult.line_items) {
-    // Normalize presentation_group to consistent capitalized format
-    const normalizedGroup = normalizePresentationGroup(autoItem.presentation_group);
+    // Determine presentation_group from category first (more reliable),
+    // then fall back to normalizing the database's presentation_group
+    // This ensures wrb/house_wrap categories go to 'Flashing & Weatherproofing'
+    // even if the database rule has presentation_group: 'siding'
+    const categoryBasedGroup = getPresentationGroup(autoItem.category);
+    const normalizedGroup = categoryBasedGroup !== 'Other Materials'
+      ? categoryBasedGroup
+      : normalizePresentationGroup(autoItem.presentation_group);
     // Get item_order (higher = appears at bottom of section)
     const itemOrder = getItemOrder(normalizedGroup, autoItem.category);
 
