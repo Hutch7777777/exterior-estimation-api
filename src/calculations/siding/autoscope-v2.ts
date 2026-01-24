@@ -408,11 +408,15 @@ export async function generateAutoScopeItemsV2(
   // 3. Evaluate each rule
   const triggeredRules: Array<{ rule: DbAutoScopeRule; quantity: number }> = [];
 
+  // Siding-related material categories to skip when user has siding assignments
+  const SIDING_MATERIAL_CATEGORIES = ['siding', 'lap_siding', 'shingle_siding', 'panel_siding', 'vertical_siding'];
+
   for (const rule of rules) {
     // Skip siding panel rules if material_assignments already cover siding
     // This prevents duplicate "Siding Panels - Main Product" when user has assigned HardiePlank, etc.
-    if (options?.skipSidingPanels && rule.material_category === 'siding') {
-      console.log(`  ⏭️ Rule ${rule.rule_id}: ${rule.rule_name} → SKIPPED (user has siding assignments)`);
+    const isSidingCategory = SIDING_MATERIAL_CATEGORIES.includes(rule.material_category?.toLowerCase() || '');
+    if (options?.skipSidingPanels && isSidingCategory) {
+      console.log(`  ⏭️ Rule ${rule.rule_id}: ${rule.rule_name} → SKIPPED (user has siding assignments, category: ${rule.material_category})`);
       result.rules_skipped.push(`${rule.material_sku}: skipped - user has siding assignments`);
       continue;
     }
