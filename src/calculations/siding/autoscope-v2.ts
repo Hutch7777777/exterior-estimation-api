@@ -372,7 +372,8 @@ export function evaluateFormula(
 export async function generateAutoScopeItemsV2(
   extractionId?: string,
   webhookMeasurements?: Record<string, any>,
-  organizationId?: string
+  organizationId?: string,
+  options?: { skipSidingPanels?: boolean }
 ): Promise<AutoScopeV2Result> {
   const result: AutoScopeV2Result = {
     line_items: [],
@@ -408,6 +409,14 @@ export async function generateAutoScopeItemsV2(
   const triggeredRules: Array<{ rule: DbAutoScopeRule; quantity: number }> = [];
 
   for (const rule of rules) {
+    // Skip siding panel rules if material_assignments already cover siding
+    // This prevents duplicate "Siding Panels - Main Product" when user has assigned HardiePlank, etc.
+    if (options?.skipSidingPanels && rule.material_category === 'siding') {
+      console.log(`  ⏭️ Rule ${rule.rule_id}: ${rule.rule_name} → SKIPPED (user has siding assignments)`);
+      result.rules_skipped.push(`${rule.material_sku}: skipped - user has siding assignments`);
+      continue;
+    }
+
     const { applies, reason } = shouldApplyRule(rule, context);
 
     if (applies) {

@@ -524,10 +524,22 @@ export async function calculateWithAutoScopeV2(
   // PART 2: Generate Auto-Scope Items (SKU-based pricing)
   // =========================================================================
 
+  // Check if material_assignments already include siding products
+  // If so, skip auto-scope rules for siding panels to prevent duplicates
+  const SIDING_CLASSES = ['siding', 'exterior_wall', 'gable', 'building'];
+  const hasSidingAssignments = materialAssignments?.some(
+    m => SIDING_CLASSES.includes(m.detection_class?.toLowerCase() || '')
+  );
+
+  if (hasSidingAssignments) {
+    console.log('📋 User has siding material assignments - will skip auto-scope siding panels');
+  }
+
   const autoScopeResult = await generateAutoScopeItemsV2(
     extractionId,
     webhookMeasurements as Record<string, any>,
-    organizationId
+    organizationId,
+    { skipSidingPanels: hasSidingAssignments }
   );
 
   // =========================================================================
