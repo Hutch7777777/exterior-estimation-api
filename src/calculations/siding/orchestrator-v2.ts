@@ -784,12 +784,14 @@ function getPresentationGroup(category?: string): string {
     'trim': 'Trim',
     'corner': 'Corners',
     'corners': 'Corners',
-    'flashing': 'Flashing',
+    'flashing': 'Flashing & Weatherproofing',
+    'water_barrier': 'Flashing & Weatherproofing',
+    'house_wrap': 'Flashing & Weatherproofing',
+    'housewrap': 'Flashing & Weatherproofing',
+    'wrb': 'Flashing & Weatherproofing',
+    'weatherproofing': 'Flashing & Weatherproofing',
     'fasteners': 'Fasteners',
     'accessories': 'Accessories',
-    'water_barrier': 'House Wrap & Accessories',
-    'house_wrap': 'House Wrap & Accessories',
-    'housewrap': 'House Wrap & Accessories',
     'caulk': 'Caulk & Sealants',
     'paint': 'Paint & Primer',
   };
@@ -807,13 +809,16 @@ function normalizePresentationGroup(group?: string): string {
     'trim': 'Trim',
     'corners': 'Corners',
     'corner': 'Corners',
-    'flashing': 'Flashing',
+    'flashing': 'Flashing & Weatherproofing',
+    'flashing & weatherproofing': 'Flashing & Weatherproofing',
+    'house wrap & accessories': 'Flashing & Weatherproofing',
+    'house wrap': 'Flashing & Weatherproofing',
+    'housewrap': 'Flashing & Weatherproofing',
+    'water_barrier': 'Flashing & Weatherproofing',
+    'wrb': 'Flashing & Weatherproofing',
+    'weatherproofing': 'Flashing & Weatherproofing',
     'fasteners': 'Fasteners',
     'accessories': 'Accessories',
-    'house wrap & accessories': 'House Wrap & Accessories',
-    'house wrap': 'House Wrap & Accessories',
-    'housewrap': 'House Wrap & Accessories',
-    'water_barrier': 'House Wrap & Accessories',
     'caulk & sealants': 'Caulk & Sealants',
     'caulk': 'Caulk & Sealants',
     'paint & primer': 'Paint & Primer',
@@ -829,18 +834,7 @@ function normalizePresentationGroup(group?: string): string {
  * Get item_order for a presentation group
  * Higher values appear at the bottom of the group in Excel output
  */
-function getItemOrder(presentationGroup: string, category?: string): number {
-  // House Wrap / Tyvek items should appear at bottom of their section
-  if (presentationGroup === 'House Wrap & Accessories') {
-    return 99;
-  }
-
-  // Water barrier items within Siding group should also appear at bottom
-  const lowerCategory = category?.toLowerCase() || '';
-  if (lowerCategory === 'water_barrier' || lowerCategory === 'house_wrap' || lowerCategory === 'housewrap') {
-    return 99;
-  }
-
-  // Default order (items appear at top/middle)
+function getItemOrder(_presentationGroup: string, _category?: string): number {
+  // All items use default order - section grouping handles organization
   return 10;
 }
