@@ -406,6 +406,16 @@ export async function calculateWithAutoScopeV2(
     unit: string;
   }>
 ): Promise<V2CalculationResult> {
+  // =========================================================================
+  // DEBUG: Log detection_counts received
+  // =========================================================================
+  console.log('📊 Detection Counts received:', JSON.stringify(detectionCounts, null, 2));
+  console.log('🎯 Belly Band from detection_counts:', {
+    raw: detectionCounts?.belly_band,
+    total_lf: detectionCounts?.belly_band?.total_lf,
+    count: detectionCounts?.belly_band?.count
+  });
+
   const warnings: Array<{ code: string; message: string }> = [];
   const lineItems: CombinedLineItem[] = [];
   const missingItems: string[] = [];
@@ -621,8 +631,11 @@ export async function calculateWithAutoScopeV2(
   // Generate additional items when belly band detections are present
   // =========================================================================
   const bellyBandLf = detectionCounts?.belly_band?.total_lf || 0;
+  console.log('📏 Belly Band LF value:', bellyBandLf, '(type:', typeof bellyBandLf, ')');
+  console.log('📏 Will generate belly band items:', bellyBandLf > 0);
+
   if (bellyBandLf > 0) {
-    console.log(`🎀 Generating belly band supporting materials for ${bellyBandLf.toFixed(1)} LF`);
+    console.log(`✅ GENERATING BELLY BAND ITEMS for ${bellyBandLf.toFixed(1)} LF`);
 
     // Constants for belly band calculations
     const BOARD_LENGTH_FT = 12;
@@ -743,6 +756,16 @@ export async function calculateWithAutoScopeV2(
 
     console.log(`🎀 Added ${5} belly band items totaling $${(boardExtended + zFlashingExtended + dripEdgeExtended + nailsExtended + caulkExtended).toFixed(2)}`);
   }
+
+  // Debug: Log belly band items in lineItems
+  const bellyBandItems = lineItems.filter(item =>
+    item.presentation_group === 'Belly Band' ||
+    item.category?.includes('belly_band')
+  );
+  console.log('📦 Belly Band items in lineItems:', bellyBandItems.length);
+  bellyBandItems.forEach(item => {
+    console.log(`  - ${item.description}: presentation_group="${item.presentation_group}", category="${item.category}"`);
+  });
 
   // =========================================================================
   // PART 3: Calculate Labor and Overhead using Mike Skjei Methodology

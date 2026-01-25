@@ -48,6 +48,8 @@ router.post('/siding-estimator', async (req: Request, res: Response) => {
     // =========================================================================
     if (webhookRequest.material_assignments && webhookRequest.material_assignments.length > 0) {
       console.log(`📥 Webhook received (V2 hybrid): project_id=${webhookRequest.project_id}, assignments=${webhookRequest.material_assignments.length}`);
+      console.log('🔍 detection_counts from webhook:', JSON.stringify(webhookRequest.detection_counts, null, 2));
+      console.log('🎯 belly_band in detection_counts:', webhookRequest.detection_counts?.belly_band);
 
       // Use V2 orchestrator which combines material assignments with auto-scope
       const result = await calculateWithAutoScopeV2(
@@ -186,6 +188,8 @@ router.post('/calculate-siding', async (req: Request, res: Response) => {
     // PATH 1: ID-Based Pricing with Auto-Scope V2
     if (webhookRequest.material_assignments && webhookRequest.material_assignments.length > 0) {
       console.log(`📥 Webhook (alias, V2 hybrid) received: project_id=${webhookRequest.project_id}, assignments=${webhookRequest.material_assignments.length}`);
+      console.log('🔍 detection_counts from webhook:', JSON.stringify(webhookRequest.detection_counts, null, 2));
+      console.log('🎯 belly_band in detection_counts:', webhookRequest.detection_counts?.belly_band);
 
       // Use V2 orchestrator which combines material assignments with auto-scope
       const result = await calculateWithAutoScopeV2(
