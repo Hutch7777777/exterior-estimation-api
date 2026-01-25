@@ -401,6 +401,7 @@ export async function calculateWithAutoScopeV2(
   detectionCounts?: Record<string, {
     count: number;
     total_lf?: number;
+    total_sf?: number;
     display_name: string;
     measurement_type: 'count' | 'area' | 'linear';
     unit: string;
@@ -768,6 +769,503 @@ export async function calculateWithAutoScopeV2(
   });
 
   // =========================================================================
+  // SOFFIT - Auto-generate from detections
+  // =========================================================================
+  const soffitSf = detectionCounts?.soffit?.total_sf || 0;
+  console.log('📏 Soffit SF value:', soffitSf);
+
+  if (soffitSf > 0) {
+    console.log(`✅ GENERATING SOFFIT ITEMS for ${soffitSf.toFixed(1)} SF`);
+
+    // Soffit panels (12 SF per panel, 10% waste)
+    const soffitPanels = Math.ceil(soffitSf / 12 * 1.10);
+    const soffitPanelCost = 28.00;
+    const soffitPanelExtended = soffitPanels * soffitPanelCost;
+    lineItems.push({
+      description: 'HardieSoffit 12" Vented Panel',
+      sku: 'JH-SOFFIT-12-VENT',
+      quantity: soffitPanels,
+      unit: 'ea',
+      category: 'soffit_panel',
+      presentation_group: 'Soffit & Fascia',
+      item_order: 1,
+      material_unit_cost: soffitPanelCost,
+      material_extended: soffitPanelExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: soffitPanelExtended,
+      calculation_source: 'auto-scope',
+      notes: `Soffit panels: ${soffitSf.toFixed(1)} SF × 1.10 waste ÷ 12 SF = ${soffitPanels} panels`,
+    });
+    totalMaterialCost += soffitPanelExtended;
+
+    // J-channel for soffit (perimeter estimate)
+    const soffitPerimeterLf = Math.sqrt(soffitSf) * 4;
+    const jChannelPcs = Math.ceil(soffitPerimeterLf / 12 * 1.10);
+    const jChannelCost = 6.50;
+    const jChannelExtended = jChannelPcs * jChannelCost;
+    lineItems.push({
+      description: 'Soffit J-Channel 12ft',
+      sku: 'SOFFIT-JCHANNEL-12',
+      quantity: jChannelPcs,
+      unit: 'ea',
+      category: 'soffit_trim',
+      presentation_group: 'Soffit & Fascia',
+      item_order: 2,
+      material_unit_cost: jChannelCost,
+      material_extended: jChannelExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: jChannelExtended,
+      calculation_source: 'auto-scope',
+      notes: `J-channel: ~${soffitPerimeterLf.toFixed(0)} LF perimeter`,
+    });
+    totalMaterialCost += jChannelExtended;
+
+    console.log(`📦 Added soffit items totaling $${(soffitPanelExtended + jChannelExtended).toFixed(2)}`);
+  }
+
+  // =========================================================================
+  // FASCIA - Auto-generate from detections
+  // =========================================================================
+  const fasciaLf = detectionCounts?.fascia?.total_lf || 0;
+  console.log('📏 Fascia LF value:', fasciaLf);
+
+  if (fasciaLf > 0) {
+    console.log(`✅ GENERATING FASCIA ITEMS for ${fasciaLf.toFixed(1)} LF`);
+
+    // Fascia boards (12ft pieces, 10% waste)
+    const fasciaPcs = Math.ceil(fasciaLf / 12 * 1.10);
+    const fasciaCost = 24.00;
+    const fasciaExtended = fasciaPcs * fasciaCost;
+    lineItems.push({
+      description: 'HardieTrim 5/4 x 6 x 12ft Fascia',
+      sku: 'JH-TRIM-FASCIA-6',
+      quantity: fasciaPcs,
+      unit: 'ea',
+      category: 'fascia_board',
+      presentation_group: 'Soffit & Fascia',
+      item_order: 3,
+      material_unit_cost: fasciaCost,
+      material_extended: fasciaExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: fasciaExtended,
+      calculation_source: 'auto-scope',
+      notes: `Fascia boards: ${fasciaLf.toFixed(1)} LF × 1.10 waste ÷ 12ft = ${fasciaPcs} pcs`,
+    });
+    totalMaterialCost += fasciaExtended;
+
+    // Fascia nails
+    const fasciaNailBoxes = Math.ceil(fasciaLf / 100);
+    const fasciaNailCost = 7.50;
+    const fasciaNailExtended = fasciaNailBoxes * fasciaNailCost;
+    lineItems.push({
+      description: 'Stainless Steel Trim Nails 1lb Box',
+      sku: 'TRIM-NAILS-SS-1LB',
+      quantity: fasciaNailBoxes,
+      unit: 'box',
+      category: 'fascia_fastener',
+      presentation_group: 'Soffit & Fascia',
+      item_order: 4,
+      material_unit_cost: fasciaNailCost,
+      material_extended: fasciaNailExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: fasciaNailExtended,
+      calculation_source: 'auto-scope',
+      notes: `Fascia nails: ${fasciaLf.toFixed(1)} LF ÷ 100 LF/box = ${fasciaNailBoxes} box`,
+    });
+    totalMaterialCost += fasciaNailExtended;
+
+    console.log(`📦 Added fascia items totaling $${(fasciaExtended + fasciaNailExtended).toFixed(2)}`);
+  }
+
+  // =========================================================================
+  // GUTTERS & DOWNSPOUTS - Auto-generate from detections
+  // =========================================================================
+  const gutterLf = detectionCounts?.gutter?.total_lf || 0;
+  const downspoutCount = detectionCounts?.downspout?.count || 0;
+  console.log('📏 Gutter LF value:', gutterLf, 'Downspout count:', downspoutCount);
+
+  if (gutterLf > 0) {
+    console.log(`✅ GENERATING GUTTER ITEMS for ${gutterLf.toFixed(1)} LF`);
+
+    // Gutter sections (10ft pieces, 10% waste)
+    const gutterPcs = Math.ceil(gutterLf / 10 * 1.10);
+    const gutterCost = 12.00;
+    const gutterExtended = gutterPcs * gutterCost;
+    lineItems.push({
+      description: '5" K-Style Aluminum Gutter 10ft',
+      sku: 'GUTTER-5K-ALU-10',
+      quantity: gutterPcs,
+      unit: 'ea',
+      category: 'gutter',
+      presentation_group: 'Gutters & Downspouts',
+      item_order: 1,
+      material_unit_cost: gutterCost,
+      material_extended: gutterExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: gutterExtended,
+      calculation_source: 'auto-scope',
+      notes: `Gutters: ${gutterLf.toFixed(1)} LF × 1.10 waste ÷ 10ft = ${gutterPcs} pcs`,
+    });
+    totalMaterialCost += gutterExtended;
+
+    // Gutter hangers (1 per 2 LF)
+    const hangerCount = Math.ceil(gutterLf / 2);
+    const hangerCost = 1.50;
+    const hangerExtended = hangerCount * hangerCost;
+    lineItems.push({
+      description: 'Hidden Gutter Hanger',
+      sku: 'GUTTER-HANGER-HIDDEN',
+      quantity: hangerCount,
+      unit: 'ea',
+      category: 'gutter_hanger',
+      presentation_group: 'Gutters & Downspouts',
+      item_order: 2,
+      material_unit_cost: hangerCost,
+      material_extended: hangerExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: hangerExtended,
+      calculation_source: 'auto-scope',
+      notes: `Hangers: ${gutterLf.toFixed(1)} LF ÷ 2 LF spacing = ${hangerCount} hangers`,
+    });
+    totalMaterialCost += hangerExtended;
+
+    // End caps (2 per run, estimate runs from LF)
+    const estimatedRuns = Math.ceil(gutterLf / 30);
+    const endCapCount = estimatedRuns * 2;
+    const endCapCost = 3.50;
+    const endCapExtended = endCapCount * endCapCost;
+    lineItems.push({
+      description: 'Gutter End Cap',
+      sku: 'GUTTER-ENDCAP',
+      quantity: endCapCount,
+      unit: 'ea',
+      category: 'gutter_accessory',
+      presentation_group: 'Gutters & Downspouts',
+      item_order: 3,
+      material_unit_cost: endCapCost,
+      material_extended: endCapExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: endCapExtended,
+      calculation_source: 'auto-scope',
+      notes: `End caps: ~${estimatedRuns} runs × 2 = ${endCapCount} caps`,
+    });
+    totalMaterialCost += endCapExtended;
+
+    console.log(`📦 Added gutter items totaling $${(gutterExtended + hangerExtended + endCapExtended).toFixed(2)}`);
+  }
+
+  if (downspoutCount > 0) {
+    console.log(`✅ GENERATING DOWNSPOUT ITEMS for ${downspoutCount} downspouts`);
+
+    // Downspouts (10ft each)
+    const downspoutCost = 8.00;
+    const downspoutExtended = downspoutCount * downspoutCost;
+    lineItems.push({
+      description: '2x3 Aluminum Downspout 10ft',
+      sku: 'DOWNSPOUT-2X3-10',
+      quantity: downspoutCount,
+      unit: 'ea',
+      category: 'downspout',
+      presentation_group: 'Gutters & Downspouts',
+      item_order: 4,
+      material_unit_cost: downspoutCost,
+      material_extended: downspoutExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: downspoutExtended,
+      calculation_source: 'auto-scope',
+      notes: `Downspouts from detection: ${downspoutCount} locations`,
+    });
+    totalMaterialCost += downspoutExtended;
+
+    // Downspout brackets (3 per downspout)
+    const dsBracketCount = downspoutCount * 3;
+    const dsBracketCost = 2.00;
+    const dsBracketExtended = dsBracketCount * dsBracketCost;
+    lineItems.push({
+      description: 'Downspout Bracket',
+      sku: 'DOWNSPOUT-BRACKET',
+      quantity: dsBracketCount,
+      unit: 'ea',
+      category: 'downspout_bracket',
+      presentation_group: 'Gutters & Downspouts',
+      item_order: 5,
+      material_unit_cost: dsBracketCost,
+      material_extended: dsBracketExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: dsBracketExtended,
+      calculation_source: 'auto-scope',
+      notes: `Brackets: ${downspoutCount} downspouts × 3 = ${dsBracketCount} brackets`,
+    });
+    totalMaterialCost += dsBracketExtended;
+
+    // Elbows (2 per downspout - top and bottom)
+    const elbowCount = downspoutCount * 2;
+    const elbowCost = 4.00;
+    const elbowExtended = elbowCount * elbowCost;
+    lineItems.push({
+      description: 'Downspout Elbow',
+      sku: 'DOWNSPOUT-ELBOW',
+      quantity: elbowCount,
+      unit: 'ea',
+      category: 'downspout',
+      presentation_group: 'Gutters & Downspouts',
+      item_order: 6,
+      material_unit_cost: elbowCost,
+      material_extended: elbowExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: elbowExtended,
+      calculation_source: 'auto-scope',
+      notes: `Elbows: ${downspoutCount} downspouts × 2 = ${elbowCount} elbows`,
+    });
+    totalMaterialCost += elbowExtended;
+
+    console.log(`📦 Added downspout items totaling $${(downspoutExtended + dsBracketExtended + elbowExtended).toFixed(2)}`);
+  }
+
+  // =========================================================================
+  // ARCHITECTURAL DETAILS - Corbels, Brackets, Shutters, Posts, Columns
+  // =========================================================================
+  const corbelCount = detectionCounts?.corbel?.count || 0;
+  const bracketDetectionCount = detectionCounts?.bracket?.count || 0;
+  const shutterCount = detectionCounts?.shutter?.count || 0;
+  const postCount = detectionCounts?.post?.count || 0;
+  const columnCount = detectionCounts?.column?.count || 0;
+
+  if (corbelCount > 0) {
+    console.log(`✅ GENERATING CORBEL ITEMS for ${corbelCount} corbels`);
+    const corbelCost = 45.00;
+    const corbelExtended = corbelCount * corbelCost;
+    lineItems.push({
+      description: 'Decorative Corbel - Primed',
+      sku: 'CORBEL-DECORATIVE',
+      quantity: corbelCount,
+      unit: 'ea',
+      category: 'corbel',
+      presentation_group: 'Architectural Details',
+      item_order: 1,
+      material_unit_cost: corbelCost,
+      material_extended: corbelExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: corbelExtended,
+      calculation_source: 'auto-scope',
+      notes: `Corbels from detection: ${corbelCount} locations`,
+    });
+    totalMaterialCost += corbelExtended;
+  }
+
+  if (bracketDetectionCount > 0) {
+    console.log(`✅ GENERATING BRACKET ITEMS for ${bracketDetectionCount} brackets`);
+    const bracketCost = 35.00;
+    const bracketExtended = bracketDetectionCount * bracketCost;
+    lineItems.push({
+      description: 'Decorative Bracket - Primed',
+      sku: 'BRACKET-DECORATIVE',
+      quantity: bracketDetectionCount,
+      unit: 'ea',
+      category: 'bracket',
+      presentation_group: 'Architectural Details',
+      item_order: 2,
+      material_unit_cost: bracketCost,
+      material_extended: bracketExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: bracketExtended,
+      calculation_source: 'auto-scope',
+      notes: `Brackets from detection: ${bracketDetectionCount} locations`,
+    });
+    totalMaterialCost += bracketExtended;
+  }
+
+  if (shutterCount > 0) {
+    console.log(`✅ GENERATING SHUTTER ITEMS for ${shutterCount} shutters`);
+    const shutterCost = 65.00;
+    const shutterExtended = shutterCount * shutterCost;
+    lineItems.push({
+      description: 'Exterior Shutter - Vinyl',
+      sku: 'SHUTTER-VINYL',
+      quantity: shutterCount,
+      unit: 'ea',
+      category: 'shutter',
+      presentation_group: 'Architectural Details',
+      item_order: 3,
+      material_unit_cost: shutterCost,
+      material_extended: shutterExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: shutterExtended,
+      calculation_source: 'auto-scope',
+      notes: `Shutters from detection: ${shutterCount} (pairs = ${Math.ceil(shutterCount / 2)})`,
+    });
+    totalMaterialCost += shutterExtended;
+  }
+
+  if (postCount > 0) {
+    console.log(`✅ GENERATING POST ITEMS for ${postCount} posts`);
+    const postCost = 85.00;
+    const postExtended = postCount * postCost;
+    lineItems.push({
+      description: 'Porch Post Wrap - PVC',
+      sku: 'POST-WRAP-PVC',
+      quantity: postCount,
+      unit: 'ea',
+      category: 'post',
+      presentation_group: 'Architectural Details',
+      item_order: 4,
+      material_unit_cost: postCost,
+      material_extended: postExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: postExtended,
+      calculation_source: 'auto-scope',
+      notes: `Post wraps from detection: ${postCount} posts`,
+    });
+    totalMaterialCost += postExtended;
+  }
+
+  if (columnCount > 0) {
+    console.log(`✅ GENERATING COLUMN ITEMS for ${columnCount} columns`);
+    const columnCost = 150.00;
+    const columnExtended = columnCount * columnCost;
+    lineItems.push({
+      description: 'Column Wrap - PVC',
+      sku: 'COLUMN-WRAP-PVC',
+      quantity: columnCount,
+      unit: 'ea',
+      category: 'column',
+      presentation_group: 'Architectural Details',
+      item_order: 5,
+      material_unit_cost: columnCost,
+      material_extended: columnExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: columnExtended,
+      calculation_source: 'auto-scope',
+      notes: `Column wraps from detection: ${columnCount} columns`,
+    });
+    totalMaterialCost += columnExtended;
+  }
+
+  // =========================================================================
+  // PENETRATION FLASHING - Vents, Outlets, Hose Bibs, Light Fixtures
+  // =========================================================================
+  const ventCount = detectionCounts?.vent?.count || 0;
+  const gableVentCount = detectionCounts?.gable_vent?.count || 0;
+  const outletCount = detectionCounts?.outlet?.count || 0;
+  const hoseBibCount = detectionCounts?.hose_bib?.count || 0;
+  const lightFixtureCount = detectionCounts?.light_fixture?.count || 0;
+
+  const totalPenetrations = ventCount + gableVentCount + outletCount + hoseBibCount + lightFixtureCount;
+
+  if (totalPenetrations > 0) {
+    console.log(`✅ GENERATING PENETRATION FLASHING for ${totalPenetrations} penetrations`);
+
+    // Penetration flashing blocks
+    const flashBlockCost = 8.50;
+    const flashBlockExtended = totalPenetrations * flashBlockCost;
+    lineItems.push({
+      description: 'Siding Penetration Flashing Block',
+      sku: 'FLASH-PENETRATION',
+      quantity: totalPenetrations,
+      unit: 'ea',
+      category: 'penetration',
+      presentation_group: 'Flashing & Weatherproofing',
+      item_order: 10,
+      material_unit_cost: flashBlockCost,
+      material_extended: flashBlockExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: flashBlockExtended,
+      calculation_source: 'auto-scope',
+      notes: `Penetration flashing: ${ventCount} vents + ${gableVentCount} gable vents + ${outletCount} outlets + ${hoseBibCount} hose bibs + ${lightFixtureCount} lights = ${totalPenetrations}`,
+    });
+    totalMaterialCost += flashBlockExtended;
+
+    // Caulk for penetrations
+    const penetrationCaulkTubes = Math.ceil(totalPenetrations / 10);
+    const penetrationCaulkCost = 8.50;
+    const penetrationCaulkExtended = penetrationCaulkTubes * penetrationCaulkCost;
+    lineItems.push({
+      description: 'Sealant for Penetrations',
+      sku: 'CAULK-PENETRATION',
+      quantity: penetrationCaulkTubes,
+      unit: 'tube',
+      category: 'penetration',
+      presentation_group: 'Flashing & Weatherproofing',
+      item_order: 11,
+      material_unit_cost: penetrationCaulkCost,
+      material_extended: penetrationCaulkExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: penetrationCaulkExtended,
+      calculation_source: 'auto-scope',
+      notes: `Penetration sealant: ${totalPenetrations} ÷ 10 per tube = ${penetrationCaulkTubes} tubes`,
+    });
+    totalMaterialCost += penetrationCaulkExtended;
+
+    console.log(`📦 Added penetration flashing items totaling $${(flashBlockExtended + penetrationCaulkExtended).toFixed(2)}`);
+  }
+
+  // Gable vents need additional trim ring
+  if (gableVentCount > 0) {
+    const gableVentTrimCost = 12.00;
+    const gableVentTrimExtended = gableVentCount * gableVentTrimCost;
+    lineItems.push({
+      description: 'Gable Vent Trim Ring',
+      sku: 'GABLE-VENT-TRIM',
+      quantity: gableVentCount,
+      unit: 'ea',
+      category: 'gable_vent',
+      presentation_group: 'Flashing & Weatherproofing',
+      item_order: 12,
+      material_unit_cost: gableVentTrimCost,
+      material_extended: gableVentTrimExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: gableVentTrimExtended,
+      calculation_source: 'auto-scope',
+      notes: `Gable vent trim rings: ${gableVentCount} vents`,
+    });
+    totalMaterialCost += gableVentTrimExtended;
+  }
+
+  // =========================================================================
+  // ROOFING COMPONENTS - Log only (for roofing trade)
+  // =========================================================================
+  const eaveLf = detectionCounts?.eave?.total_lf || 0;
+  const rakeLf = detectionCounts?.rake?.total_lf || 0;
+  const ridgeLf = detectionCounts?.ridge?.total_lf || 0;
+  const valleyLf = detectionCounts?.valley?.total_lf || 0;
+
+  if (eaveLf > 0 || rakeLf > 0 || ridgeLf > 0 || valleyLf > 0) {
+    console.log('📏 Roofing components detected:');
+    console.log(`   - Eave: ${eaveLf.toFixed(1)} LF`);
+    console.log(`   - Rake: ${rakeLf.toFixed(1)} LF`);
+    console.log(`   - Ridge: ${ridgeLf.toFixed(1)} LF`);
+    console.log(`   - Valley: ${valleyLf.toFixed(1)} LF`);
+    console.log('   (These are passed to roofing trade API for drip edge, starter, ridge cap calculations)');
+  }
+
+  // =========================================================================
+  // SUMMARY LOG - All Detection-Generated Items
+  // =========================================================================
+  const detectionGeneratedItems = lineItems.filter(item =>
+    item.notes?.toLowerCase().includes('detection') ||
+    item.notes?.toLowerCase().includes('from detection')
+  );
+  console.log('📦 Total detection-generated items:', detectionGeneratedItems.length);
+
+  // =========================================================================
   // PART 3: Calculate Labor and Overhead using Mike Skjei Methodology
   // =========================================================================
 
@@ -949,29 +1447,78 @@ function calculateMaterialQuantity(
  */
 function getPresentationGroup(category?: string): string {
   const groupMap: Record<string, string> = {
+    // Siding & Underlayment
     'siding': 'Siding',
     'lap_siding': 'Siding',
     'siding_panels': 'Siding',
     'shingle_siding': 'Siding',
     'panel_siding': 'Siding',
     'vertical_siding': 'Siding',
+
+    // Trim & Corners
     'trim': 'Trim',
     'corner': 'Corners',
     'corners': 'Corners',
+
+    // Belly Band
     'belly_band': 'Belly Band',
     'belly_band_trim': 'Belly Band',
     'belly_band_flashing': 'Belly Band',
     'belly_band_fastener': 'Belly Band',
     'belly_band_caulk': 'Belly Band',
+
+    // Soffit & Fascia
+    'soffit': 'Soffit & Fascia',
+    'soffit_panel': 'Soffit & Fascia',
+    'soffit_trim': 'Soffit & Fascia',
+    'soffit_fastener': 'Soffit & Fascia',
+    'fascia': 'Soffit & Fascia',
+    'fascia_board': 'Soffit & Fascia',
+    'fascia_fastener': 'Soffit & Fascia',
+
+    // Flashing & Weatherproofing
     'flashing': 'Flashing & Weatherproofing',
     'water_barrier': 'Flashing & Weatherproofing',
     'house_wrap': 'Flashing & Weatherproofing',
     'housewrap': 'Flashing & Weatherproofing',
     'wrb': 'Flashing & Weatherproofing',
     'weatherproofing': 'Flashing & Weatherproofing',
+    'penetration': 'Flashing & Weatherproofing',
+    'vent': 'Flashing & Weatherproofing',
+    'gable_vent': 'Flashing & Weatherproofing',
+    'light_fixture': 'Flashing & Weatherproofing',
+    'outlet': 'Flashing & Weatherproofing',
+    'hose_bib': 'Flashing & Weatherproofing',
+
+    // Fasteners & Accessories
     'fasteners': 'Fasteners',
     'accessories': 'Accessories',
+
+    // Caulk & Sealants
     'caulk': 'Caulk & Sealants',
+
+    // Architectural Details
+    'corbel': 'Architectural Details',
+    'bracket': 'Architectural Details',
+    'shutter': 'Architectural Details',
+    'post': 'Architectural Details',
+    'column': 'Architectural Details',
+    'architectural': 'Architectural Details',
+
+    // Gutters & Downspouts
+    'gutter': 'Gutters & Downspouts',
+    'gutter_hanger': 'Gutters & Downspouts',
+    'gutter_accessory': 'Gutters & Downspouts',
+    'downspout': 'Gutters & Downspouts',
+    'downspout_bracket': 'Gutters & Downspouts',
+
+    // Roofing Components
+    'eave': 'Roofing Components',
+    'rake': 'Roofing Components',
+    'ridge': 'Roofing Components',
+    'valley': 'Roofing Components',
+
+    // Paint & Primer
     'paint': 'Paint & Primer',
   };
 
@@ -984,12 +1531,26 @@ function getPresentationGroup(category?: string): string {
  */
 function normalizePresentationGroup(group?: string): string {
   const normalizeMap: Record<string, string> = {
+    // Siding
     'siding': 'Siding',
+    'siding & underlayment': 'Siding',
+
+    // Trim & Corners
     'trim': 'Trim',
     'corners': 'Corners',
     'corner': 'Corners',
+    'trim & corners': 'Trim',
+
+    // Belly Band
     'belly band': 'Belly Band',
     'belly_band': 'Belly Band',
+
+    // Soffit & Fascia
+    'soffit': 'Soffit & Fascia',
+    'fascia': 'Soffit & Fascia',
+    'soffit & fascia': 'Soffit & Fascia',
+
+    // Flashing & Weatherproofing
     'flashing': 'Flashing & Weatherproofing',
     'flashing & weatherproofing': 'Flashing & Weatherproofing',
     'house wrap & accessories': 'Flashing & Weatherproofing',
@@ -998,13 +1559,38 @@ function normalizePresentationGroup(group?: string): string {
     'water_barrier': 'Flashing & Weatherproofing',
     'wrb': 'Flashing & Weatherproofing',
     'weatherproofing': 'Flashing & Weatherproofing',
+    'penetrations': 'Flashing & Weatherproofing',
+
+    // Fasteners & Accessories
     'fasteners': 'Fasteners',
+    'fasteners & accessories': 'Fasteners',
     'accessories': 'Accessories',
+
+    // Caulk & Sealants
     'caulk & sealants': 'Caulk & Sealants',
     'caulk': 'Caulk & Sealants',
+    'sealants': 'Caulk & Sealants',
+
+    // Architectural Details
+    'architectural': 'Architectural Details',
+    'architectural details': 'Architectural Details',
+
+    // Gutters & Downspouts
+    'gutter': 'Gutters & Downspouts',
+    'gutters': 'Gutters & Downspouts',
+    'gutters & downspouts': 'Gutters & Downspouts',
+
+    // Roofing Components
+    'roofing': 'Roofing Components',
+    'roofing components': 'Roofing Components',
+
+    // Paint & Primer
     'paint & primer': 'Paint & Primer',
     'paint': 'Paint & Primer',
+
+    // Other
     'other materials': 'Other Materials',
+    'other': 'Other Materials',
   };
 
   const lowered = group?.toLowerCase() || '';
