@@ -50,6 +50,26 @@ interface OverheadCost {
   notes: string;
 }
 
+// Labor auto-scope rule from database
+interface LaborAutoScopeRule {
+  id: number;
+  rule_id: string;
+  rule_name: string;
+  description: string | null;
+  trade: string;
+  trigger_type: 'always' | 'material_category' | 'material_sku_pattern' | 'detection_class';
+  trigger_value: string | null;
+  trigger_condition: Record<string, any> | null;
+  labor_rate_id: number | null;
+  quantity_source: 'facade_sqft' | 'material_sqft' | 'material_count' | 'detection_count' | 'material_lf';
+  quantity_formula: string | null;
+  quantity_unit: string;
+  priority: number;
+  active: boolean;
+  // Joined labor_rates data
+  labor_rates?: LaborRate;
+}
+
 // Labor line item for output
 interface LaborLineItem {
   rate_id: string;
@@ -181,15 +201,154 @@ export interface V2CalculationResult {
 // ============================================================================
 
 /**
+ * Calculate installation labor using labor_auto_scope_rules
+ * Dynamically generates labor items based on:
+ * - Material categories in the takeoff
+ * - Detection counts for specialty items
+ * - Facade area for universal items (WRB, demo)
+ */
+function calculateInstallationLaborFromRules(
+  materials: CombinedLineItem[],
+  laborAutoScopeRules: LaborAutoScopeRule[],
+  detectionCounts: Record<string, { count: number; total_lf?: number; total_sf?: number }> | undefined,
+  facadeAreaSqft: number
+): { laborItems: LaborLineItem[], subtotal: number } {
+
+  console.log('👷 Calculating installation labor from auto-scope rules...');
+  console.log(`   Facade area: ${facadeAreaSqft.toFixed(2)} SF (${(facadeAreaSqft / 100).toFixed(2)} SQ)`);
+  console.log(`   Rules to evaluate: ${laborAutoScopeRules.length}`);
+
+  const laborItems: LaborLineItem[] = [];
+
+  // Group materials by category for rule evaluation
+  const materialsByCategory: Record<string, { sqft: number; count: number; lf: number }> = {};
+
+  for (const item of materials) {
+    const category = (item.category || 'other').toLowerCase();
+    if (!materialsByCategory[category]) {
+      materialsByCategory[category] = { sqft: 0, count: 0, lf: 0 };
+    }
+
+    // Accumulate based on unit
+    if (item.unit === 'SF' || item.unit === 'sf') {
+      materialsByCategory[category].sqft += item.quantity;
+    } else if (item.unit === 'LF' || item.unit === 'lf') {
+      materialsByCategory[category].lf += item.quantity;
+    } else {
+      // For EA/piece count, estimate sqft from squares_for_labor or count
+      if (item.squares_for_labor) {
+        materialsByCategory[category].sqft += item.squares_for_labor * 100;
+      }
+      materialsByCategory[category].count += item.quantity;
+    }
+  }
+
+  console.log('   Material categories found:', Object.keys(materialsByCategory).join(', '));
+
+  // Evaluate each rule in priority order
+  for (const rule of laborAutoScopeRules) {
+    let quantity = 0;
+    let shouldApply = false;
+    const rate = rule.labor_rates;
+
+    if (!rate) {
+      console.log(`   ⚠️ Rule ${rule.rule_id} has no linked labor rate - skipping`);
+      continue;
+    }
+
+    // Evaluate trigger condition
+    if (rule.trigger_type === 'always') {
+      // Always apply (e.g., WRB, demo/cleanup)
+      shouldApply = true;
+      if (rule.quantity_source === 'facade_sqft') {
+        quantity = facadeAreaSqft / 100; // Convert to squares
+      }
+
+    } else if (rule.trigger_type === 'material_category') {
+      // Check if any of the trigger categories have materials
+      const categories = (rule.trigger_value || '').split(',').map(c => c.trim().toLowerCase());
+
+      for (const cat of categories) {
+        const catData = materialsByCategory[cat];
+        if (catData) {
+          shouldApply = true;
+
+          if (rule.quantity_source === 'material_sqft') {
+            quantity += catData.sqft / 100; // Convert to squares
+          } else if (rule.quantity_source === 'material_count') {
+            quantity += catData.count;
+          } else if (rule.quantity_source === 'material_lf') {
+            quantity += catData.lf;
+          }
+        }
+      }
+
+    } else if (rule.trigger_type === 'material_sku_pattern') {
+      // Check for SKUs matching pattern (e.g., CORBEL%)
+      const pattern = (rule.trigger_value || '').replace('%', '').toLowerCase();
+      const matchingItems = materials.filter(item =>
+        item.sku?.toLowerCase().startsWith(pattern)
+      );
+
+      if (matchingItems.length > 0) {
+        shouldApply = true;
+        quantity = matchingItems.reduce((sum, item) => sum + item.quantity, 0);
+      }
+
+    } else if (rule.trigger_type === 'detection_class') {
+      // Check detection counts
+      const classes = (rule.trigger_value || '').split(',').map(c => c.trim().toLowerCase());
+
+      for (const cls of classes) {
+        const detection = detectionCounts?.[cls];
+        if (detection) {
+          shouldApply = true;
+          quantity += detection.count || 0;
+        }
+      }
+    }
+
+    // Apply the rule if conditions met and quantity > 0
+    if (shouldApply && quantity > 0) {
+      const unitCost = parseFloat(rate.base_rate) || 0;
+      const multiplier = parseFloat(rate.difficulty_multiplier) || 1.0;
+      const minCharge = parseFloat(rate.min_charge || '0');
+
+      const baseCost = quantity * unitCost * multiplier;
+      const totalCost = Math.max(baseCost, minCharge);
+
+      console.log(`   ✅ ${rule.rule_name}: ${quantity.toFixed(2)} ${rule.quantity_unit} × $${unitCost}/${rule.quantity_unit} = $${totalCost.toFixed(2)}`);
+
+      laborItems.push({
+        rate_id: rate.id,
+        rate_name: rate.rate_name,
+        description: rate.description || rule.description || '',
+        quantity: Math.round(quantity * 100) / 100,
+        unit: rule.quantity_unit || rate.unit,
+        unit_cost: unitCost,
+        total_cost: Math.round(totalCost * 100) / 100,
+        notes: `From rule: ${rule.rule_id}`
+      });
+    }
+  }
+
+  const subtotal = laborItems.reduce((sum, item) => sum + item.total_cost, 0);
+  console.log(`   📊 Installation labor subtotal: $${subtotal.toFixed(2)} (${laborItems.length} items)`);
+
+  return { laborItems, subtotal: Math.round(subtotal * 100) / 100 };
+}
+
+/**
+ * Legacy labor calculation - fallback if no rules available
  * Calculate installation labor based on Mike Skjei methodology
  */
-function calculateInstallationLabor(
+function calculateInstallationLaborLegacy(
   materials: CombinedLineItem[],
   laborRates: LaborRate[],
   productCategory: string = 'lap_siding'
 ): { laborItems: LaborLineItem[], subtotal: number } {
 
-  console.log('👷 Calculating installation labor...');
+  console.log('👷 Calculating installation labor (legacy method)...');
   console.log(`   Product category: ${productCategory}`);
 
   const RATE_MAP: Record<string, string> = {
@@ -429,6 +588,7 @@ export async function calculateWithAutoScopeV2(
   // =========================================================================
 
   let laborRates: LaborRate[] = [];
+  let laborAutoScopeRules: LaborAutoScopeRule[] = [];
   let sidingOverheadCosts: OverheadCost[] = [];
 
   if (isDatabaseConfigured()) {
@@ -451,6 +611,36 @@ export async function calculateWithAutoScopeV2(
     } else {
       laborRates = (laborData || []) as LaborRate[];
       console.log(`   Found ${laborRates.length} labor rates`);
+    }
+
+    // Fetch labor auto-scope rules with joined labor_rates
+    console.log('📋 Fetching labor auto-scope rules...');
+    const { data: laborRulesData, error: laborRulesError } = await client
+      .from('labor_auto_scope_rules')
+      .select(`
+        *,
+        labor_rates (
+          id,
+          rate_name,
+          description,
+          unit,
+          base_rate,
+          difficulty_multiplier,
+          min_charge,
+          notes
+        )
+      `)
+      .eq('active', true)
+      .eq('trade', 'siding')
+      .order('priority');
+
+    if (laborRulesError) {
+      console.error('Error fetching labor auto-scope rules:', laborRulesError);
+      // Not a critical error - fall back to old method
+      console.log('   ⚠️ Will use legacy labor calculation method');
+    } else {
+      laborAutoScopeRules = (laborRulesData || []) as LaborAutoScopeRule[];
+      console.log(`   Found ${laborAutoScopeRules.length} labor auto-scope rules`);
     }
 
     // Fetch overhead costs
@@ -1321,12 +1511,36 @@ export async function calculateWithAutoScopeV2(
   const materialTotal = lineItems.reduce((sum, item) => sum + (item.material_extended || 0), 0);
   console.log(`📊 Material total: $${materialTotal.toFixed(2)}`);
 
-  // Calculate installation labor using squares
-  const { laborItems, subtotal: laborSubtotal } = calculateInstallationLabor(
-    lineItems,
-    laborRates,
-    'lap_siding'
-  );
+  // Get facade area for labor calculations (prefer net_siding_area_sqft, fall back to facade_sqft)
+  const facadeAreaSqft = webhookMeasurements?.net_siding_area_sqft ||
+    webhookMeasurements?.facade_sqft ||
+    webhookMeasurements?.gross_wall_area_sqft ||
+    0;
+
+  // Calculate installation labor using auto-scope rules (or legacy method if no rules)
+  let laborItems: LaborLineItem[];
+  let laborSubtotal: number;
+
+  if (laborAutoScopeRules.length > 0) {
+    // Use new rules-based labor calculation
+    const laborResult = calculateInstallationLaborFromRules(
+      lineItems,
+      laborAutoScopeRules,
+      detectionCounts,
+      facadeAreaSqft
+    );
+    laborItems = laborResult.laborItems;
+    laborSubtotal = laborResult.subtotal;
+  } else {
+    // Fall back to legacy method
+    const laborResult = calculateInstallationLaborLegacy(
+      lineItems,
+      laborRates,
+      'lap_siding'
+    );
+    laborItems = laborResult.laborItems;
+    laborSubtotal = laborResult.subtotal;
+  }
 
   // Calculate overhead costs
   const { overheadItems, subtotal: overheadSubtotal } = calculateOverhead(
