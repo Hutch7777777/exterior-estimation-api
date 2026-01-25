@@ -55,7 +55,8 @@ router.post('/siding-estimator', async (req: Request, res: Response) => {
         webhookRequest.extraction_id,
         webhookRequest.measurements,
         webhookRequest.organization_id,
-        markupRate
+        markupRate,
+        webhookRequest.detection_counts
       );
 
       // Transform to webhook response format
@@ -192,7 +193,8 @@ router.post('/calculate-siding', async (req: Request, res: Response) => {
         webhookRequest.extraction_id,
         webhookRequest.measurements,
         webhookRequest.organization_id,
-        markupRate
+        markupRate,
+        webhookRequest.detection_counts
       );
 
       const response: WebhookResponse = {

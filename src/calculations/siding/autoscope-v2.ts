@@ -54,6 +54,7 @@ interface DbTriggerCondition {
   min_openings?: number;
   min_net_area?: number;
   min_facade_area?: number;
+  min_belly_band_lf?: number;  // Trigger when belly_band_lf >= this value
   // Add more as needed
 }
 
@@ -230,6 +231,10 @@ export function buildMeasurementContext(
     gable_area_sqft: get(['gables_area_sqft', 'gable_area_sqft']),
     gable_rake_lf: get(['gables_rake_lf', 'gable_rake_lf']),
 
+    // Belly Band (from detection_counts in webhook)
+    belly_band_count: get(['belly_band_count']),
+    belly_band_lf: get(['belly_band_lf']),
+
     // Other
     level_starter_lf,
     avg_wall_height_ft,
@@ -329,6 +334,14 @@ export function shouldApplyRule(
       return { applies: true, reason: `facade_area=${context.facade_area_sqft} >= ${tc.min_facade_area}` };
     }
     return { applies: false, reason: `facade_area=${context.facade_area_sqft} < ${tc.min_facade_area}` };
+  }
+
+  // { "min_belly_band_lf": N } - check belly band linear feet
+  if (tc.min_belly_band_lf !== undefined) {
+    if (context.belly_band_lf >= tc.min_belly_band_lf) {
+      return { applies: true, reason: `belly_band_lf=${context.belly_band_lf} >= ${tc.min_belly_band_lf}` };
+    }
+    return { applies: false, reason: `belly_band_lf=${context.belly_band_lf} < ${tc.min_belly_band_lf}` };
   }
 
   // Unknown trigger condition format - log and apply by default

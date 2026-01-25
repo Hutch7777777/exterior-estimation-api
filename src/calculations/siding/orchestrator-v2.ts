@@ -397,7 +397,14 @@ export async function calculateWithAutoScopeV2(
   extractionId?: string,
   webhookMeasurements?: WebhookMeasurements,
   organizationId?: string,
-  markupRate: number = 0.15
+  markupRate: number = 0.15,
+  detectionCounts?: Record<string, {
+    count: number;
+    total_lf?: number;
+    display_name: string;
+    measurement_type: 'count' | 'area' | 'linear';
+    unit: string;
+  }>
 ): Promise<V2CalculationResult> {
   const warnings: Array<{ code: string; message: string }> = [];
   const lineItems: CombinedLineItem[] = [];
@@ -541,9 +548,19 @@ export async function calculateWithAutoScopeV2(
     console.log('📋 User has siding material assignments - will skip auto-scope siding panels');
   }
 
+  // Merge detection_counts into webhookMeasurements for buildMeasurementContext
+  // This extracts belly_band_count and belly_band_lf from detection_counts
+  const enrichedMeasurements: Record<string, any> = {
+    ...(webhookMeasurements || {}),
+  };
+  if (detectionCounts?.belly_band) {
+    enrichedMeasurements.belly_band_count = detectionCounts.belly_band.count || 0;
+    enrichedMeasurements.belly_band_lf = detectionCounts.belly_band.total_lf || 0;
+  }
+
   const autoScopeResult = await generateAutoScopeItemsV2(
     extractionId,
-    webhookMeasurements as Record<string, any>,
+    enrichedMeasurements,
     organizationId,
     { skipSidingPanels: hasSidingAssignments }
   );
@@ -597,6 +614,134 @@ export async function calculateWithAutoScopeV2(
 
     totalMaterialCost += autoItem.material_extended;
     // Labor is now calculated separately via calculateInstallationLabor()
+  }
+
+  // =========================================================================
+  // BELLY BAND SUPPORTING MATERIALS
+  // Generate additional items when belly band detections are present
+  // =========================================================================
+  const bellyBandLf = detectionCounts?.belly_band?.total_lf || 0;
+  if (bellyBandLf > 0) {
+    console.log(`🎀 Generating belly band supporting materials for ${bellyBandLf.toFixed(1)} LF`);
+
+    // Constants for belly band calculations
+    const BOARD_LENGTH_FT = 12;
+    const WASTE_FACTOR = 1.10; // 10% waste
+    const FLASHING_LENGTH_FT = 10;
+    const CAULK_COVERAGE_LF = 50;
+    const NAILS_COVERAGE_LF = 150;
+
+    // 1. HardieTrim 5/4 x 8 boards (12ft pieces) - main belly band material
+    const boardPieces = Math.ceil((bellyBandLf / BOARD_LENGTH_FT) * WASTE_FACTOR);
+    const boardUnitCost = 32.00;
+    const boardExtended = boardPieces * boardUnitCost;
+    lineItems.push({
+      description: 'HardieTrim 5/4 x 8 x 12ft ColorPlus - Belly Band',
+      sku: 'JH-TRIM-BB-8-CP',
+      quantity: boardPieces,
+      unit: 'ea',
+      category: 'belly_band_trim',
+      presentation_group: 'Belly Band',
+      item_order: 1,
+      material_unit_cost: boardUnitCost,
+      material_extended: boardExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: boardExtended,
+      calculation_source: 'auto-scope',
+      notes: `Belly band trim boards: ${bellyBandLf.toFixed(1)} LF ÷ ${BOARD_LENGTH_FT}ft × ${WASTE_FACTOR} waste = ${boardPieces} pcs`,
+    });
+    totalMaterialCost += boardExtended;
+
+    // 2. Z-Flashing 2" (10ft pieces) - runs along top of belly band
+    const zFlashingPieces = Math.ceil((bellyBandLf / FLASHING_LENGTH_FT) * WASTE_FACTOR);
+    const zFlashingUnitCost = 12.50;
+    const zFlashingExtended = zFlashingPieces * zFlashingUnitCost;
+    lineItems.push({
+      description: 'Z-Flashing 2" Pre-Painted White - Belly Band Head',
+      sku: '112Z2BPW',
+      quantity: zFlashingPieces,
+      unit: 'ea',
+      category: 'belly_band_flashing',
+      presentation_group: 'Belly Band',
+      item_order: 2,
+      material_unit_cost: zFlashingUnitCost,
+      material_extended: zFlashingExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: zFlashingExtended,
+      calculation_source: 'auto-scope',
+      notes: `Head flashing for belly band: ${bellyBandLf.toFixed(1)} LF ÷ ${FLASHING_LENGTH_FT}ft = ${zFlashingPieces} pcs`,
+    });
+    totalMaterialCost += zFlashingExtended;
+
+    // 3. Aluminum Drip Edge (10ft pieces) - at bottom of belly band
+    const dripEdgePieces = Math.ceil((bellyBandLf / FLASHING_LENGTH_FT) * WASTE_FACTOR);
+    const dripEdgeUnitCost = 8.50;
+    const dripEdgeExtended = dripEdgePieces * dripEdgeUnitCost;
+    lineItems.push({
+      description: 'Aluminum Drip Edge 10ft - Belly Band Bottom',
+      sku: 'ROOF-DRIP-10',
+      quantity: dripEdgePieces,
+      unit: 'ea',
+      category: 'belly_band_flashing',
+      presentation_group: 'Belly Band',
+      item_order: 3,
+      material_unit_cost: dripEdgeUnitCost,
+      material_extended: dripEdgeExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: dripEdgeExtended,
+      calculation_source: 'auto-scope',
+      notes: `Drip edge for belly band bottom: ${bellyBandLf.toFixed(1)} LF ÷ ${FLASHING_LENGTH_FT}ft = ${dripEdgePieces} pcs`,
+    });
+    totalMaterialCost += dripEdgeExtended;
+
+    // 4. Stainless Steel Trim Nails (1 box per 150 LF)
+    const nailBoxes = Math.ceil(bellyBandLf / NAILS_COVERAGE_LF);
+    const nailsUnitCost = 7.50;
+    const nailsExtended = nailBoxes * nailsUnitCost;
+    lineItems.push({
+      description: 'Stainless Steel Trim Nails 2" - Belly Band',
+      sku: 'TRIM-NAIL-SS-2',
+      quantity: nailBoxes,
+      unit: 'box',
+      category: 'belly_band_fastener',
+      presentation_group: 'Belly Band',
+      item_order: 4,
+      material_unit_cost: nailsUnitCost,
+      material_extended: nailsExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: nailsExtended,
+      calculation_source: 'auto-scope',
+      notes: `Trim nails for belly band: ${bellyBandLf.toFixed(1)} LF ÷ ${NAILS_COVERAGE_LF} LF/box = ${nailBoxes} boxes`,
+    });
+    totalMaterialCost += nailsExtended;
+
+    // 5. ColorMatch Caulk (1 tube per 50 LF for joints)
+    const caulkTubes = Math.ceil(bellyBandLf / CAULK_COVERAGE_LF);
+    const caulkUnitCost = 8.50;
+    const caulkExtended = caulkTubes * caulkUnitCost;
+    lineItems.push({
+      description: 'ColorMatch Caulk - Belly Band Joints',
+      sku: 'JH-CAULK-CM',
+      quantity: caulkTubes,
+      unit: 'tube',
+      category: 'belly_band_caulk',
+      presentation_group: 'Belly Band',
+      item_order: 5,
+      material_unit_cost: caulkUnitCost,
+      material_extended: caulkExtended,
+      labor_unit_cost: 0,
+      labor_extended: 0,
+      total_extended: caulkExtended,
+      calculation_source: 'auto-scope',
+      notes: `Joint caulk for belly band: ${bellyBandLf.toFixed(1)} LF ÷ ${CAULK_COVERAGE_LF} LF/tube = ${caulkTubes} tubes`,
+    });
+    totalMaterialCost += caulkExtended;
+
+    console.log(`🎀 Added ${5} belly band items totaling $${(boardExtended + zFlashingExtended + dripEdgeExtended + nailsExtended + caulkExtended).toFixed(2)}`);
   }
 
   // =========================================================================
@@ -790,6 +935,11 @@ function getPresentationGroup(category?: string): string {
     'trim': 'Trim',
     'corner': 'Corners',
     'corners': 'Corners',
+    'belly_band': 'Belly Band',
+    'belly_band_trim': 'Belly Band',
+    'belly_band_flashing': 'Belly Band',
+    'belly_band_fastener': 'Belly Band',
+    'belly_band_caulk': 'Belly Band',
     'flashing': 'Flashing & Weatherproofing',
     'water_barrier': 'Flashing & Weatherproofing',
     'house_wrap': 'Flashing & Weatherproofing',
@@ -815,6 +965,8 @@ function normalizePresentationGroup(group?: string): string {
     'trim': 'Trim',
     'corners': 'Corners',
     'corner': 'Corners',
+    'belly band': 'Belly Band',
+    'belly_band': 'Belly Band',
     'flashing': 'Flashing & Weatherproofing',
     'flashing & weatherproofing': 'Flashing & Weatherproofing',
     'house wrap & accessories': 'Flashing & Weatherproofing',

@@ -44,6 +44,10 @@ export interface MeasurementContext {
   gable_area_sqft: number;
   gable_rake_lf: number;
 
+  // Belly Band
+  belly_band_count: number;
+  belly_band_lf: number;
+
   // Other
   level_starter_lf: number;
   avg_wall_height_ft: number;

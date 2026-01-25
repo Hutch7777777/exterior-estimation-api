@@ -98,6 +98,15 @@ export interface WebhookRequest {
   // Measurements (from HOVER extraction) - optional if using material_assignments
   measurements?: WebhookMeasurements;
 
+  // Detection counts by class (corbels, brackets, belly_bands, etc.) - from Detection Editor
+  detection_counts?: Record<string, {
+    count: number;
+    total_lf?: number;  // For linear measurement types (e.g., belly_band)
+    display_name: string;
+    measurement_type: 'count' | 'area' | 'linear';
+    unit: string;
+  }>;
+
   // NEW: Material assignments from frontend (ID-based pricing)
   material_assignments?: MaterialAssignment[];
 
