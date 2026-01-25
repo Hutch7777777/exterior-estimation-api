@@ -1158,6 +1158,7 @@ export async function calculateWithAutoScopeV2(
 
   // =========================================================================
   // PENETRATION FLASHING - Vents, Outlets, Hose Bibs, Light Fixtures
+  // Skip auto-scope flashing for detections that have manual material assignments
   // =========================================================================
   const ventCount = detectionCounts?.vent?.count || 0;
   const gableVentCount = detectionCounts?.gable_vent?.count || 0;
@@ -1165,18 +1166,63 @@ export async function calculateWithAutoScopeV2(
   const hoseBibCount = detectionCounts?.hose_bib?.count || 0;
   const lightFixtureCount = detectionCounts?.light_fixture?.count || 0;
 
-  const totalPenetrations = ventCount + gableVentCount + outletCount + hoseBibCount + lightFixtureCount;
+  // DEBUG: Log materialAssignments to understand structure
+  console.log(`[DEBUG] materialAssignments received: ${materialAssignments?.length || 0} items`);
+  if (materialAssignments && materialAssignments.length > 0) {
+    console.log('[DEBUG] First materialAssignment structure:', JSON.stringify(materialAssignments[0], null, 2));
+    console.log('[DEBUG] All assignment classes:', materialAssignments.map((ma: any) =>
+      ma.detection_class || ma.class || ma.detectionClass || 'NO_CLASS'
+    ).join(', '));
+  }
 
-  if (totalPenetrations > 0) {
-    console.log(`✅ GENERATING PENETRATION FLASHING for ${totalPenetrations} penetrations`);
+  // Helper function to count material assignments for a detection class
+  // Checks multiple property names for compatibility with different payload formats
+  const getAssignedCount = (detectionClass: string): number => {
+    if (!materialAssignments || !Array.isArray(materialAssignments)) {
+      console.log(`[DEBUG] No materialAssignments array for class: ${detectionClass}`);
+      return 0;
+    }
+
+    const assignmentsForClass = materialAssignments.filter((ma: any) => {
+      // Check all possible property names for detection class
+      const maClass = (ma.detection_class || ma.class || ma.detectionClass || '').toLowerCase();
+      const matches = maClass === detectionClass.toLowerCase();
+      if (matches) {
+        console.log(`[DEBUG] Found matching assignment for ${detectionClass}:`, ma);
+      }
+      return matches;
+    });
+
+    const count = assignmentsForClass.reduce(
+      (sum: number, ma: any) => sum + (ma.quantity || ma.count || ma.qty || 1), 0
+    );
+
+    console.log(`[DEBUG] getAssignedCount('${detectionClass}'): found ${assignmentsForClass.length} assignments, total count: ${count}`);
+    return count;
+  };
+
+  // Calculate unassigned penetrations (those without manual material assignments)
+  const unassignedVentCount = Math.max(0, ventCount - getAssignedCount('vent'));
+  const unassignedGableVentCount = Math.max(0, gableVentCount - getAssignedCount('gable_vent'));
+  const unassignedOutletCount = Math.max(0, outletCount - getAssignedCount('outlet'));
+  const unassignedHoseBibCount = Math.max(0, hoseBibCount - getAssignedCount('hose_bib'));
+  const unassignedLightFixtureCount = Math.max(0, lightFixtureCount - getAssignedCount('light_fixture'));
+
+  const totalUnassignedPenetrations = unassignedVentCount + unassignedGableVentCount +
+    unassignedOutletCount + unassignedHoseBibCount + unassignedLightFixtureCount;
+
+  console.log(`🔍 Penetration check: ${ventCount} vents (${unassignedVentCount} unassigned), ${gableVentCount} gable vents (${unassignedGableVentCount} unassigned)`);
+
+  if (totalUnassignedPenetrations > 0) {
+    console.log(`✅ GENERATING PENETRATION FLASHING for ${totalUnassignedPenetrations} unassigned penetrations (skipping ${ventCount + gableVentCount + outletCount + hoseBibCount + lightFixtureCount - totalUnassignedPenetrations} with material assignments)`);
 
     // Penetration flashing blocks
     const flashBlockCost = 8.50;
-    const flashBlockExtended = totalPenetrations * flashBlockCost;
+    const flashBlockExtended = totalUnassignedPenetrations * flashBlockCost;
     lineItems.push({
       description: 'Siding Penetration Flashing Block',
       sku: 'FLASH-PENETRATION',
-      quantity: totalPenetrations,
+      quantity: totalUnassignedPenetrations,
       unit: 'ea',
       category: 'penetration',
       presentation_group: 'Flashing & Weatherproofing',
@@ -1187,12 +1233,12 @@ export async function calculateWithAutoScopeV2(
       labor_extended: 0,
       total_extended: flashBlockExtended,
       calculation_source: 'auto-scope',
-      notes: `Penetration flashing: ${ventCount} vents + ${gableVentCount} gable vents + ${outletCount} outlets + ${hoseBibCount} hose bibs + ${lightFixtureCount} lights = ${totalPenetrations}`,
+      notes: `Penetration flashing (unassigned only): ${unassignedVentCount} vents + ${unassignedGableVentCount} gable vents + ${unassignedOutletCount} outlets + ${unassignedHoseBibCount} hose bibs + ${unassignedLightFixtureCount} lights = ${totalUnassignedPenetrations}`,
     });
     totalMaterialCost += flashBlockExtended;
 
     // Caulk for penetrations
-    const penetrationCaulkTubes = Math.ceil(totalPenetrations / 10);
+    const penetrationCaulkTubes = Math.ceil(totalUnassignedPenetrations / 10);
     const penetrationCaulkCost = 8.50;
     const penetrationCaulkExtended = penetrationCaulkTubes * penetrationCaulkCost;
     lineItems.push({
@@ -1209,21 +1255,23 @@ export async function calculateWithAutoScopeV2(
       labor_extended: 0,
       total_extended: penetrationCaulkExtended,
       calculation_source: 'auto-scope',
-      notes: `Penetration sealant: ${totalPenetrations} ÷ 10 per tube = ${penetrationCaulkTubes} tubes`,
+      notes: `Penetration sealant: ${totalUnassignedPenetrations} ÷ 10 per tube = ${penetrationCaulkTubes} tubes`,
     });
     totalMaterialCost += penetrationCaulkExtended;
 
     console.log(`📦 Added penetration flashing items totaling $${(flashBlockExtended + penetrationCaulkExtended).toFixed(2)}`);
+  } else if (ventCount + gableVentCount + outletCount + hoseBibCount + lightFixtureCount > 0) {
+    console.log(`⏭️ SKIPPING penetration flashing - all ${ventCount + gableVentCount + outletCount + hoseBibCount + lightFixtureCount} penetrations have material assignments`);
   }
 
-  // Gable vents need additional trim ring
-  if (gableVentCount > 0) {
+  // Gable vents need additional trim ring (only for unassigned gable vents)
+  if (unassignedGableVentCount > 0) {
     const gableVentTrimCost = 12.00;
-    const gableVentTrimExtended = gableVentCount * gableVentTrimCost;
+    const gableVentTrimExtended = unassignedGableVentCount * gableVentTrimCost;
     lineItems.push({
       description: 'Gable Vent Trim Ring',
       sku: 'GABLE-VENT-TRIM',
-      quantity: gableVentCount,
+      quantity: unassignedGableVentCount,
       unit: 'ea',
       category: 'gable_vent',
       presentation_group: 'Flashing & Weatherproofing',
@@ -1234,7 +1282,7 @@ export async function calculateWithAutoScopeV2(
       labor_extended: 0,
       total_extended: gableVentTrimExtended,
       calculation_source: 'auto-scope',
-      notes: `Gable vent trim rings: ${gableVentCount} vents`,
+      notes: `Gable vent trim rings: ${unassignedGableVentCount} unassigned vents (${gableVentCount - unassignedGableVentCount} have material assignments)`,
     });
     totalMaterialCost += gableVentTrimExtended;
   }
@@ -1485,6 +1533,7 @@ function getPresentationGroup(category?: string): string {
     'weatherproofing': 'Flashing & Weatherproofing',
     'penetration': 'Flashing & Weatherproofing',
     'vent': 'Flashing & Weatherproofing',
+    'vents': 'Flashing & Weatherproofing',  // Plural category from pricing_items
     'gable_vent': 'Flashing & Weatherproofing',
     'light_fixture': 'Flashing & Weatherproofing',
     'outlet': 'Flashing & Weatherproofing',
