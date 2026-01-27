@@ -59,6 +59,14 @@ export interface MeasurementContext {
   total_openings_count: number;
 
   // =========================================================================
+  // TRIM TOTALS (computed from window + door + garage trim)
+  // =========================================================================
+  trim_total_lf: number;       // Total trim linear feet (all types combined)
+  trim_head_lf: number;        // Total head trim (windows + doors + garages)
+  trim_jamb_lf: number;        // Total jamb trim (windows + doors + garages)
+  trim_sill_lf: number;        // Total sill trim (windows only)
+
+  // =========================================================================
   // ALIASES for database formula compatibility
   // Database formulas use these variable names
   // =========================================================================

@@ -48,6 +48,7 @@ interface DbAutoScopeRule {
 // { "min_corners": 1 } - min corners count
 // { "min_openings": 1 } - min openings count
 // { "min_net_area": 500 } - min net area sqft
+// { "trim_total_lf_gt": 0 } - trigger when trim_total_lf > 0
 interface DbTriggerCondition {
   always?: boolean;
   min_corners?: number;
@@ -55,7 +56,15 @@ interface DbTriggerCondition {
   min_net_area?: number;
   min_facade_area?: number;
   min_belly_band_lf?: number;  // Trigger when belly_band_lf >= this value
-  // Add more as needed
+  // Trim triggers
+  min_trim_total_lf?: number;  // Trigger when trim_total_lf >= this value
+  min_trim_head_lf?: number;   // Trigger when trim_head_lf >= this value
+  min_trim_jamb_lf?: number;   // Trigger when trim_jamb_lf >= this value
+  min_trim_sill_lf?: number;   // Trigger when trim_sill_lf >= this value
+  trim_total_lf_gt?: number;   // Trigger when trim_total_lf > this value (alternative syntax)
+  trim_head_lf_gt?: number;    // Trigger when trim_head_lf > this value
+  trim_jamb_lf_gt?: number;    // Trigger when trim_jamb_lf > this value
+  trim_sill_lf_gt?: number;    // Trigger when trim_sill_lf > this value
 }
 
 // ============================================================================
@@ -194,6 +203,33 @@ export function buildMeasurementContext(
     ? facade_sqft / avg_wall_height_ft
     : level_starter_lf || 0;
 
+  // =========================================================================
+  // TRIM TOTALS - Compute from payload or sum component parts
+  // Payload sends: trim.total_head_lf, trim.total_jamb_lf, trim.total_sill_lf, trim.total_trim_lf
+  // =========================================================================
+
+  // Check if webhook has a nested 'trim' object (from DetectionEditor payload)
+  const trimObj = wh.trim || {};
+
+  // Get trim values: first check trim object, then check flat fields, then compute from components
+  const trim_head_lf = Number(trimObj.total_head_lf) ||
+    get(['trim_head_lf', 'total_head_lf']) ||
+    (get(['windows_head_lf', 'window_head_lf']) + get(['doors_head_lf', 'door_head_lf']) + get(['garages_head_lf', 'garage_head_lf']));
+
+  const trim_jamb_lf = Number(trimObj.total_jamb_lf) ||
+    get(['trim_jamb_lf', 'total_jamb_lf']) ||
+    (get(['windows_jamb_lf', 'window_jamb_lf']) + get(['doors_jamb_lf', 'door_jamb_lf']) + get(['garages_jamb_lf', 'garage_jamb_lf']));
+
+  const trim_sill_lf = Number(trimObj.total_sill_lf) ||
+    get(['trim_sill_lf', 'total_sill_lf']) ||
+    get(['windows_sill_lf', 'window_sill_lf']);
+
+  const trim_total_lf = Number(trimObj.total_trim_lf) ||
+    get(['trim_total_lf', 'total_trim_lf']) ||
+    (trim_head_lf + trim_jamb_lf + trim_sill_lf);
+
+  console.log('[AutoScope] Trim totals:', { trim_total_lf, trim_head_lf, trim_jamb_lf, trim_sill_lf });
+
   const ctx: MeasurementContext = {
     // Primary areas
     facade_sqft,
@@ -244,6 +280,14 @@ export function buildMeasurementContext(
     total_corner_lf: outside_corner_lf + inside_corner_lf,
     total_openings_area_sqft: openings_area_sqft,
     total_openings_count: openings_count,
+
+    // =========================================================================
+    // TRIM TOTALS (computed from window + door + garage trim)
+    // =========================================================================
+    trim_total_lf,
+    trim_head_lf,
+    trim_jamb_lf,
+    trim_sill_lf,
 
     // =========================================================================
     // ALIASES for database formula compatibility
@@ -342,6 +386,74 @@ export function shouldApplyRule(
       return { applies: true, reason: `belly_band_lf=${context.belly_band_lf} >= ${tc.min_belly_band_lf}` };
     }
     return { applies: false, reason: `belly_band_lf=${context.belly_band_lf} < ${tc.min_belly_band_lf}` };
+  }
+
+  // =========================================================================
+  // TRIM TRIGGERS - Check trim linear feet conditions
+  // =========================================================================
+
+  // { "min_trim_total_lf": N } - check total trim linear feet (>= comparison)
+  if (tc.min_trim_total_lf !== undefined) {
+    if (context.trim_total_lf >= tc.min_trim_total_lf) {
+      return { applies: true, reason: `trim_total_lf=${context.trim_total_lf} >= ${tc.min_trim_total_lf}` };
+    }
+    return { applies: false, reason: `trim_total_lf=${context.trim_total_lf} < ${tc.min_trim_total_lf}` };
+  }
+
+  // { "trim_total_lf_gt": N } - check total trim linear feet (> comparison, alternative syntax)
+  if (tc.trim_total_lf_gt !== undefined) {
+    if (context.trim_total_lf > tc.trim_total_lf_gt) {
+      return { applies: true, reason: `trim_total_lf=${context.trim_total_lf} > ${tc.trim_total_lf_gt}` };
+    }
+    return { applies: false, reason: `trim_total_lf=${context.trim_total_lf} <= ${tc.trim_total_lf_gt}` };
+  }
+
+  // { "min_trim_head_lf": N } - check head trim linear feet
+  if (tc.min_trim_head_lf !== undefined) {
+    if (context.trim_head_lf >= tc.min_trim_head_lf) {
+      return { applies: true, reason: `trim_head_lf=${context.trim_head_lf} >= ${tc.min_trim_head_lf}` };
+    }
+    return { applies: false, reason: `trim_head_lf=${context.trim_head_lf} < ${tc.min_trim_head_lf}` };
+  }
+
+  // { "trim_head_lf_gt": N } - check head trim linear feet (> comparison)
+  if (tc.trim_head_lf_gt !== undefined) {
+    if (context.trim_head_lf > tc.trim_head_lf_gt) {
+      return { applies: true, reason: `trim_head_lf=${context.trim_head_lf} > ${tc.trim_head_lf_gt}` };
+    }
+    return { applies: false, reason: `trim_head_lf=${context.trim_head_lf} <= ${tc.trim_head_lf_gt}` };
+  }
+
+  // { "min_trim_jamb_lf": N } - check jamb trim linear feet
+  if (tc.min_trim_jamb_lf !== undefined) {
+    if (context.trim_jamb_lf >= tc.min_trim_jamb_lf) {
+      return { applies: true, reason: `trim_jamb_lf=${context.trim_jamb_lf} >= ${tc.min_trim_jamb_lf}` };
+    }
+    return { applies: false, reason: `trim_jamb_lf=${context.trim_jamb_lf} < ${tc.min_trim_jamb_lf}` };
+  }
+
+  // { "trim_jamb_lf_gt": N } - check jamb trim linear feet (> comparison)
+  if (tc.trim_jamb_lf_gt !== undefined) {
+    if (context.trim_jamb_lf > tc.trim_jamb_lf_gt) {
+      return { applies: true, reason: `trim_jamb_lf=${context.trim_jamb_lf} > ${tc.trim_jamb_lf_gt}` };
+    }
+    return { applies: false, reason: `trim_jamb_lf=${context.trim_jamb_lf} <= ${tc.trim_jamb_lf_gt}` };
+  }
+
+  // { "min_trim_sill_lf": N } - check sill trim linear feet
+  if (tc.min_trim_sill_lf !== undefined) {
+    if (context.trim_sill_lf >= tc.min_trim_sill_lf) {
+      return { applies: true, reason: `trim_sill_lf=${context.trim_sill_lf} >= ${tc.min_trim_sill_lf}` };
+    }
+    return { applies: false, reason: `trim_sill_lf=${context.trim_sill_lf} < ${tc.min_trim_sill_lf}` };
+  }
+
+  // { "trim_sill_lf_gt": N } - check sill trim linear feet (> comparison)
+  if (tc.trim_sill_lf_gt !== undefined) {
+    if (context.trim_sill_lf > tc.trim_sill_lf_gt) {
+      return { applies: true, reason: `trim_sill_lf=${context.trim_sill_lf} > ${tc.trim_sill_lf_gt}` };
+    }
+    return { applies: false, reason: `trim_sill_lf=${context.trim_sill_lf} <= ${tc.trim_sill_lf_gt}` };
   }
 
   // Unknown trigger condition format - log and apply by default
