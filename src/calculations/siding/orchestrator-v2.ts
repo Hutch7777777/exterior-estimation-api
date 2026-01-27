@@ -678,21 +678,44 @@ export async function calculateWithAutoScopeV2(
   // =========================================================================
 
   // Extract trim totals from webhookMeasurements for fallback
-  // DEBUG: Log the raw webhookMeasurements to see what we're receiving
-  console.log('✂️ [DEBUG] Raw webhookMeasurements:', JSON.stringify(webhookMeasurements, null, 2));
-  console.log('✂️ [DEBUG] webhookMeasurements?.trim:', JSON.stringify((webhookMeasurements as any)?.trim, null, 2));
+  // Data can be in EITHER location:
+  //   1. Nested: webhookMeasurements.trim.total_trim_lf (from Detection Editor via webhook.ts enrichment)
+  //   2. Flat: webhookMeasurements.total_trim_lf (if passed directly)
+  const wm = webhookMeasurements as any;
 
-  const trimTotals = (webhookMeasurements as any)?.trim || {};
-  const trimTotalLf = Number(trimTotals.total_trim_lf) || 0;
-  const trimHeadLf = Number(trimTotals.total_head_lf) || 0;
-  const trimJambLf = Number(trimTotals.total_jamb_lf) || 0;
-  const trimSillLf = Number(trimTotals.total_sill_lf) || 0;
+  // Check nested object first, then flat properties
+  const trimTotalLf =
+    Number(wm?.trim?.total_trim_lf) ||
+    Number(wm?.total_trim_lf) ||
+    0;
 
-  console.log('✂️ [MaterialAssignments] Trim totals available for fallback:', {
-    trimTotals,
+  const trimHeadLf =
+    Number(wm?.trim?.total_head_lf) ||
+    Number(wm?.total_head_lf) ||
+    Number(wm?.trim_head_lf) ||
+    0;
+
+  const trimJambLf =
+    Number(wm?.trim?.total_jamb_lf) ||
+    Number(wm?.total_jamb_lf) ||
+    Number(wm?.trim_jamb_lf) ||
+    0;
+
+  const trimSillLf =
+    Number(wm?.trim?.total_sill_lf) ||
+    Number(wm?.total_sill_lf) ||
+    Number(wm?.trim_sill_lf) ||
+    0;
+
+  console.log('✂️ [MaterialAssignments] Trim totals extracted:', {
     trimTotalLf, trimHeadLf, trimJambLf, trimSillLf,
-    hasWebhookMeasurements: !!webhookMeasurements,
-    hasTrimObject: !!(webhookMeasurements as any)?.trim
+    sources: {
+      nested_trim: wm?.trim,
+      flat_total_trim_lf: wm?.total_trim_lf,
+      flat_total_head_lf: wm?.total_head_lf,
+      flat_total_jamb_lf: wm?.total_jamb_lf,
+      flat_total_sill_lf: wm?.total_sill_lf,
+    }
   });
 
   if (materialAssignments && materialAssignments.length > 0) {
