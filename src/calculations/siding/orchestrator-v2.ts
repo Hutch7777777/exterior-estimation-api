@@ -671,6 +671,10 @@ export async function calculateWithAutoScopeV2(
   // =========================================================================
 
   // Extract trim totals from webhookMeasurements for fallback
+  // DEBUG: Log the raw webhookMeasurements to see what we're receiving
+  console.log('✂️ [DEBUG] Raw webhookMeasurements:', JSON.stringify(webhookMeasurements, null, 2));
+  console.log('✂️ [DEBUG] webhookMeasurements?.trim:', JSON.stringify((webhookMeasurements as any)?.trim, null, 2));
+
   const trimTotals = (webhookMeasurements as any)?.trim || {};
   const trimTotalLf = Number(trimTotals.total_trim_lf) || 0;
   const trimHeadLf = Number(trimTotals.total_head_lf) || 0;
@@ -678,7 +682,10 @@ export async function calculateWithAutoScopeV2(
   const trimSillLf = Number(trimTotals.total_sill_lf) || 0;
 
   console.log('✂️ [MaterialAssignments] Trim totals available for fallback:', {
-    trimTotalLf, trimHeadLf, trimJambLf, trimSillLf
+    trimTotals,
+    trimTotalLf, trimHeadLf, trimJambLf, trimSillLf,
+    hasWebhookMeasurements: !!webhookMeasurements,
+    hasTrimObject: !!(webhookMeasurements as any)?.trim
   });
 
   if (materialAssignments && materialAssignments.length > 0) {
