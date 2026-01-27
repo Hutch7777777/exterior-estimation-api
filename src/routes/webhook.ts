@@ -51,11 +51,22 @@ router.post('/siding-estimator', async (req: Request, res: Response) => {
       console.log('🔍 detection_counts from webhook:', JSON.stringify(webhookRequest.detection_counts, null, 2));
       console.log('🎯 belly_band in detection_counts:', webhookRequest.detection_counts?.belly_band);
 
+      // Extract trim data - can be at top level OR nested in measurements
+      const trimData = webhookRequest.trim || (webhookRequest.measurements as any)?.trim;
+      console.log('✂️ Trim data from webhook:', JSON.stringify(trimData, null, 2));
+      console.log('✂️ Trim total_trim_lf:', trimData?.total_trim_lf);
+
+      // Merge trim into measurements for buildMeasurementContext
+      const enrichedMeasurements = {
+        ...(webhookRequest.measurements || {}),
+        trim: trimData,  // Ensure trim is available in measurements
+      };
+
       // Use V2 orchestrator which combines material assignments with auto-scope
       const result = await calculateWithAutoScopeV2(
         webhookRequest.material_assignments,
         webhookRequest.extraction_id,
-        webhookRequest.measurements,
+        enrichedMeasurements,
         webhookRequest.organization_id,
         markupRate,
         webhookRequest.detection_counts
@@ -191,11 +202,22 @@ router.post('/calculate-siding', async (req: Request, res: Response) => {
       console.log('🔍 detection_counts from webhook:', JSON.stringify(webhookRequest.detection_counts, null, 2));
       console.log('🎯 belly_band in detection_counts:', webhookRequest.detection_counts?.belly_band);
 
+      // Extract trim data - can be at top level OR nested in measurements
+      const trimData = webhookRequest.trim || (webhookRequest.measurements as any)?.trim;
+      console.log('✂️ Trim data from webhook (alias):', JSON.stringify(trimData, null, 2));
+      console.log('✂️ Trim total_trim_lf (alias):', trimData?.total_trim_lf);
+
+      // Merge trim into measurements for buildMeasurementContext
+      const enrichedMeasurements = {
+        ...(webhookRequest.measurements || {}),
+        trim: trimData,  // Ensure trim is available in measurements
+      };
+
       // Use V2 orchestrator which combines material assignments with auto-scope
       const result = await calculateWithAutoScopeV2(
         webhookRequest.material_assignments,
         webhookRequest.extraction_id,
-        webhookRequest.measurements,
+        enrichedMeasurements,
         webhookRequest.organization_id,
         markupRate,
         webhookRequest.detection_counts

@@ -68,6 +68,15 @@ export interface WebhookMeasurements {
 
   level_starter_lf?: number;
   avg_wall_height_ft?: number;
+
+  // Trim totals (aggregated from window + door + garage trim)
+  // Sent from Detection Editor as trim: { total_head_lf, total_jamb_lf, total_sill_lf, total_trim_lf }
+  trim?: {
+    total_head_lf?: number;    // Sum of all head trim (windows + doors + garages)
+    total_jamb_lf?: number;    // Sum of all jamb trim (windows + doors + garages)
+    total_sill_lf?: number;    // Sum of all sill trim (windows only)
+    total_trim_lf?: number;    // Total of all trim
+  };
 }
 
 export interface WebhookSidingConfig {
@@ -97,6 +106,15 @@ export interface WebhookRequest {
 
   // Measurements (from HOVER extraction) - optional if using material_assignments
   measurements?: WebhookMeasurements;
+
+  // Trim totals (can also be at top level of request, not nested in measurements)
+  // Detection Editor sends: trim: { total_head_lf, total_jamb_lf, total_sill_lf, total_trim_lf }
+  trim?: {
+    total_head_lf?: number;
+    total_jamb_lf?: number;
+    total_sill_lf?: number;
+    total_trim_lf?: number;
+  };
 
   // Detection counts by class (corbels, brackets, belly_bands, etc.) - from Detection Editor
   detection_counts?: Record<string, {

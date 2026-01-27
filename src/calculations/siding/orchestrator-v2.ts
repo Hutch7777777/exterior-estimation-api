@@ -759,6 +759,12 @@ export async function calculateWithAutoScopeV2(
     enrichedMeasurements.belly_band_lf = detectionCounts.belly_band.total_lf || 0;
   }
 
+  // =========================================================================
+  // DEBUG: Log trim data flow
+  // =========================================================================
+  console.log('✂️ [Orchestrator] webhookMeasurements.trim:', JSON.stringify((webhookMeasurements as any)?.trim, null, 2));
+  console.log('✂️ [Orchestrator] enrichedMeasurements.trim:', JSON.stringify(enrichedMeasurements.trim, null, 2));
+
   const autoScopeResult = await generateAutoScopeItemsV2(
     extractionId,
     enrichedMeasurements,
