@@ -670,6 +670,17 @@ export async function calculateWithAutoScopeV2(
   // PART 1: Process Material Assignments (ID-based pricing)
   // =========================================================================
 
+  // Extract trim totals from webhookMeasurements for fallback
+  const trimTotals = (webhookMeasurements as any)?.trim || {};
+  const trimTotalLf = Number(trimTotals.total_trim_lf) || 0;
+  const trimHeadLf = Number(trimTotals.total_head_lf) || 0;
+  const trimJambLf = Number(trimTotals.total_jamb_lf) || 0;
+  const trimSillLf = Number(trimTotals.total_sill_lf) || 0;
+
+  console.log('✂️ [MaterialAssignments] Trim totals available for fallback:', {
+    trimTotalLf, trimHeadLf, trimJambLf, trimSillLf
+  });
+
   if (materialAssignments && materialAssignments.length > 0) {
     // Batch fetch pricing for all assigned materials
     const pricingIds = materialAssignments.map(m => m.pricing_item_id);
@@ -688,16 +699,33 @@ export async function calculateWithAutoScopeV2(
         continue;
       }
 
+      // =========================================================================
+      // TRIM FALLBACK: Use aggregated trim totals when detection has no dimensions
+      // =========================================================================
+      let effectiveQuantity = assignment.quantity;
+      let notes = `From detection: ${assignment.quantity.toFixed(2)} ${assignment.unit}`;
+      const isTrimClass = assignment.detection_class?.toLowerCase() === 'trim';
+
+      if (isTrimClass && assignment.quantity === 0 && trimTotalLf > 0) {
+        // Fallback to aggregated trim totals
+        effectiveQuantity = trimTotalLf;
+        notes = `From trim totals: ${trimTotalLf.toFixed(2)} LF (head: ${trimHeadLf.toFixed(1)}, jamb: ${trimJambLf.toFixed(1)}, sill: ${trimSillLf.toFixed(1)})`;
+        console.log(`✂️ [Trim Fallback] ${pricing.product_name}: Using trim totals ${trimTotalLf.toFixed(2)} LF instead of 0`);
+      }
+
+      // Create a modified assignment with effective quantity for calculation
+      const effectiveAssignment = { ...assignment, quantity: effectiveQuantity };
+
       // Calculate quantity based on unit conversion
-      const quantity = calculateMaterialQuantity(assignment, pricing);
+      const quantity = calculateMaterialQuantity(effectiveAssignment, pricing);
       const materialCost = quantity * Number(pricing.material_cost || 0);
       const materialExtended = Math.round(materialCost * 100) / 100;
 
       // Calculate squares for labor (SF / 100 = squares)
       let squaresForLabor = 0;
       if (assignment.unit === 'SF') {
-        squaresForLabor = assignment.quantity / 100;
-        console.log(`   📐 Squares for labor: ${assignment.quantity} SF / 100 = ${squaresForLabor.toFixed(2)} SQ`);
+        squaresForLabor = effectiveQuantity / 100;
+        console.log(`   📐 Squares for labor: ${effectiveQuantity} SF / 100 = ${squaresForLabor.toFixed(2)} SQ`);
       }
 
       // Get consistent presentation_group and item_order
@@ -726,7 +754,7 @@ export async function calculateWithAutoScopeV2(
         detection_id: assignment.detection_id,
         detection_ids: [assignment.detection_id],
         detection_count: 1,
-        notes: `From detection: ${assignment.quantity.toFixed(2)} ${assignment.unit}`,
+        notes,
       });
 
       totalMaterialCost += materialCost;
