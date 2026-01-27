@@ -567,8 +567,15 @@ export async function calculateWithAutoScopeV2(
   }>
 ): Promise<V2CalculationResult> {
   // =========================================================================
-  // DEBUG: Log detection_counts received
+  // DEBUG: Log ALL incoming parameters at function entry
   // =========================================================================
+  console.log('🚀 [Orchestrator] Function called with parameters:');
+  console.log('   materialAssignments count:', materialAssignments?.length || 0);
+  console.log('   extractionId:', extractionId);
+  console.log('   organizationId:', organizationId);
+  console.log('   markupRate:', markupRate);
+  console.log('   webhookMeasurements keys:', webhookMeasurements ? Object.keys(webhookMeasurements) : 'undefined');
+  console.log('   webhookMeasurements.trim:', JSON.stringify((webhookMeasurements as any)?.trim, null, 2));
   console.log('📊 Detection Counts received:', JSON.stringify(detectionCounts, null, 2));
   console.log('🎯 Belly Band from detection_counts:', {
     raw: detectionCounts?.belly_band,
