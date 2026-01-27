@@ -701,12 +701,36 @@ export async function calculateWithAutoScopeV2(
 
       // =========================================================================
       // TRIM FALLBACK: Use aggregated trim totals when detection has no dimensions
+      // Check both detection_class AND pricing.category for trim products
       // =========================================================================
       let effectiveQuantity = assignment.quantity;
       let notes = `From detection: ${assignment.quantity.toFixed(2)} ${assignment.unit}`;
-      const isTrimClass = assignment.detection_class?.toLowerCase() === 'trim';
 
-      if (isTrimClass && assignment.quantity === 0 && trimTotalLf > 0) {
+      const detectionClass = assignment.detection_class?.toLowerCase() || '';
+      const pricingCategory = pricing.category?.toLowerCase() || '';
+      const productName = pricing.product_name?.toLowerCase() || '';
+
+      // Check if this is a trim item by:
+      // 1. detection_class is 'trim' OR contains 'trim'
+      // 2. pricing category is 'trim'
+      // 3. product name contains 'trim'
+      const isTrimItem =
+        detectionClass === 'trim' ||
+        detectionClass.includes('trim') ||
+        pricingCategory === 'trim' ||
+        pricingCategory.includes('trim') ||
+        productName.includes('trim');
+
+      console.log(`✂️ [Trim Check] ${pricing.product_name}:`, {
+        detection_class: assignment.detection_class,
+        pricing_category: pricing.category,
+        quantity: assignment.quantity,
+        unit: assignment.unit,
+        isTrimItem,
+        trimTotalLf
+      });
+
+      if (isTrimItem && assignment.quantity === 0 && trimTotalLf > 0) {
         // Fallback to aggregated trim totals
         effectiveQuantity = trimTotalLf;
         notes = `From trim totals: ${trimTotalLf.toFixed(2)} LF (head: ${trimHeadLf.toFixed(1)}, jamb: ${trimJambLf.toFixed(1)}, sill: ${trimSillLf.toFixed(1)})`;
