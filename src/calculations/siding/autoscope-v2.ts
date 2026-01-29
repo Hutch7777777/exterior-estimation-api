@@ -16,10 +16,12 @@ import {
   MeasurementContext,
   AutoScopeLineItem,
   AutoScopeV2Result,
+  AutoScopeV2Options,
   CadHoverMeasurements,
-  ManufacturerMeasurements,
   ManufacturerGroups,
+  ManufacturerMeasurements
 } from '../../types/autoscope';
+// PricingItem type used indirectly via getPricingByIds return type
 
 // ============================================================================
 // DATABASE RULE TYPE (matches actual siding_auto_scope_rules table)
@@ -43,9 +45,10 @@ interface DbAutoScopeRule {
   active: boolean;
   created_at: string;
   updated_at: string;
-  // Manufacturer-specific rule filtering
-  // NULL = generic rule (applies to total project area)
-  // ['James Hardie'] = only applies to James Hardie products
+  // Manufacturer filter for per-manufacturer rules
+  // null = generic rule (applies to all manufacturers using total project area)
+  // ['James Hardie'] = only applies to James Hardie products using Hardie SF
+  // ['Nichiha'] = only applies to Nichiha products using Nichiha SF
   // ['Engage Building Products'] = only applies to FastPlank products
   manufacturer_filter: string[] | null;
 }
@@ -327,13 +330,13 @@ export function buildMeasurementContext(
 }
 
 // ============================================================================
-// MANUFACTURER GROUPING (for per-manufacturer auto-scope rules)
+// MANUFACTURER GROUPING - Group material assignments by manufacturer
 // ============================================================================
 
 /**
- * Material assignment from the orchestrator
+ * Material assignment structure for manufacturer grouping
  */
-export interface MaterialAssignment {
+export interface MaterialAssignmentForGrouping {
   pricing_item_id: string;
   quantity: number;
   unit: string;
@@ -343,23 +346,21 @@ export interface MaterialAssignment {
 }
 
 /**
- * Build manufacturer groups from material assignments
- * Groups SF/LF by manufacturer for per-manufacturer auto-scope rule application
+ * Group material assignments by manufacturer
+ * Enriches assignments with manufacturer info from pricing_items table
  *
- * Example output:
- * {
- *   "James Hardie": { area_sqft: 800, linear_ft: 120, ... },
- *   "Engage Building Products": { area_sqft: 700, linear_ft: 100, ... }
- * }
+ * @param materialAssignments - Array of material assignments from Detection Editor
+ * @param organizationId - Optional org ID for pricing overrides
+ * @returns ManufacturerGroups map with aggregated measurements per manufacturer
  */
 export async function buildManufacturerGroups(
-  materialAssignments: MaterialAssignment[],
+  materialAssignments: MaterialAssignmentForGrouping[],
   organizationId?: string
 ): Promise<ManufacturerGroups> {
   const groups: ManufacturerGroups = {};
 
   if (!materialAssignments || materialAssignments.length === 0) {
-    console.log('[AutoScope] No material assignments - skipping manufacturer grouping');
+    console.log('[AutoScope] No material assignments to group by manufacturer');
     return groups;
   }
 
@@ -375,23 +376,23 @@ export async function buildManufacturerGroups(
     return groups;
   }
 
-  // Fetch pricing items to get manufacturer info
+  // Fetch pricing with manufacturer info
   const pricingMap = await getPricingByIds(pricingItemIds, organizationId);
 
   console.log(`[AutoScope] Fetched pricing for ${pricingMap.size}/${pricingItemIds.length} items`);
 
   // Group assignments by manufacturer
   for (const assignment of materialAssignments) {
-    const pricingItem = pricingMap.get(assignment.pricing_item_id);
+    const pricing = pricingMap.get(assignment.pricing_item_id);
 
-    if (!pricingItem) {
+    if (!pricing) {
       console.warn(`[AutoScope] No pricing found for ID: ${assignment.pricing_item_id}`);
       continue;
     }
 
-    const manufacturer = pricingItem.manufacturer;
+    const manufacturer = pricing.manufacturer;
     if (!manufacturer || manufacturer.trim() === '') {
-      console.warn(`[AutoScope] No manufacturer for SKU: ${pricingItem.sku}`);
+      console.warn(`[AutoScope] No manufacturer for SKU: ${pricing.sku}`);
       continue;
     }
 
@@ -419,6 +420,14 @@ export async function buildManufacturerGroups(
     } else {
       // Default to area for unknown units (most siding is area-based)
       groups[manufacturer].area_sqft += quantity;
+    }
+
+    // Also add explicit area/perimeter if provided (for non-unit-based assignments)
+    if (assignment.area_sqft && unit !== 'SF') {
+      groups[manufacturer].area_sqft += assignment.area_sqft;
+    }
+    if (assignment.perimeter_lf && unit !== 'LF') {
+      groups[manufacturer].linear_ft += assignment.perimeter_lf;
     }
 
     // Track detection IDs for provenance
@@ -457,8 +466,7 @@ export function buildManufacturerContext(
   mfrContext.facade_area_sqft = manufacturerData.area_sqft;
   mfrContext.gross_wall_area_sqft = manufacturerData.area_sqft;
 
-  // For net siding area, use manufacturer's area (assuming similar openings ratio)
-  // Or we could scale it proportionally, but for simplicity we use the direct value
+  // For net siding area, scale proportionally based on total area ratio
   const areaRatio = baseContext.facade_sqft > 0
     ? manufacturerData.area_sqft / baseContext.facade_sqft
     : 1;
@@ -470,7 +478,10 @@ export function buildManufacturerContext(
   }
 
   // Scale perimeter proportionally based on area ratio
-  mfrContext.facade_perimeter_lf = baseContext.facade_perimeter_lf * areaRatio;
+  // Or use linear_ft if provided
+  mfrContext.facade_perimeter_lf = manufacturerData.linear_ft > 0
+    ? manufacturerData.linear_ft
+    : baseContext.facade_perimeter_lf * areaRatio;
 
   return mfrContext;
 }
@@ -649,16 +660,6 @@ export function evaluateFormula(
 // ============================================================================
 // MAIN: GENERATE AUTO-SCOPE ITEMS V2
 // ============================================================================
-
-/**
- * Options for generateAutoScopeItemsV2
- */
-export interface AutoScopeV2Options {
-  /** Skip siding panel rules when user has material assignments */
-  skipSidingPanels?: boolean;
-  /** Manufacturer groups for per-manufacturer rule application */
-  manufacturerGroups?: ManufacturerGroups;
-}
 
 /**
  * Generate auto-scope line items with manufacturer-aware rule application

@@ -857,7 +857,7 @@ export async function calculateWithAutoScopeV2(
 
   // =========================================================================
   // BUILD MANUFACTURER GROUPS from material assignments
-  // This enables per-manufacturer auto-scope rules (e.g., Hardie nails for Hardie siding)
+  // This aggregates SF/LF by manufacturer for per-manufacturer auto-scope rules
   // =========================================================================
   console.log('🏭 Building manufacturer groups from material assignments...');
 
