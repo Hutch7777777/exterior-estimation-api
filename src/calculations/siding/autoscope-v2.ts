@@ -11,12 +11,14 @@
  */
 
 import { getSupabaseClient, isDatabaseConfigured } from '../../services/database';
-import { getPricingBySkus, calculateTotalLabor } from '../../services/pricing';
+import { getPricingBySkus, getPricingByIds, calculateTotalLabor } from '../../services/pricing';
 import {
   MeasurementContext,
   AutoScopeLineItem,
   AutoScopeV2Result,
-  CadHoverMeasurements
+  CadHoverMeasurements,
+  ManufacturerMeasurements,
+  ManufacturerGroups,
 } from '../../types/autoscope';
 
 // ============================================================================
@@ -41,6 +43,11 @@ interface DbAutoScopeRule {
   active: boolean;
   created_at: string;
   updated_at: string;
+  // Manufacturer-specific rule filtering
+  // NULL = generic rule (applies to total project area)
+  // ['James Hardie'] = only applies to James Hardie products
+  // ['Engage Building Products'] = only applies to FastPlank products
+  manufacturer_filter: string[] | null;
 }
 
 // Database uses this format for trigger conditions:
@@ -320,6 +327,155 @@ export function buildMeasurementContext(
 }
 
 // ============================================================================
+// MANUFACTURER GROUPING (for per-manufacturer auto-scope rules)
+// ============================================================================
+
+/**
+ * Material assignment from the orchestrator
+ */
+export interface MaterialAssignment {
+  pricing_item_id: string;
+  quantity: number;
+  unit: string;
+  area_sqft?: number;
+  perimeter_lf?: number;
+  detection_id?: string;
+}
+
+/**
+ * Build manufacturer groups from material assignments
+ * Groups SF/LF by manufacturer for per-manufacturer auto-scope rule application
+ *
+ * Example output:
+ * {
+ *   "James Hardie": { area_sqft: 800, linear_ft: 120, ... },
+ *   "Engage Building Products": { area_sqft: 700, linear_ft: 100, ... }
+ * }
+ */
+export async function buildManufacturerGroups(
+  materialAssignments: MaterialAssignment[],
+  organizationId?: string
+): Promise<ManufacturerGroups> {
+  const groups: ManufacturerGroups = {};
+
+  if (!materialAssignments || materialAssignments.length === 0) {
+    console.log('[AutoScope] No material assignments - skipping manufacturer grouping');
+    return groups;
+  }
+
+  // Get unique pricing item IDs
+  const pricingItemIds = [...new Set(
+    materialAssignments
+      .map(a => a.pricing_item_id)
+      .filter(id => id && id.trim() !== '')
+  )];
+
+  if (pricingItemIds.length === 0) {
+    console.log('[AutoScope] No valid pricing item IDs in assignments');
+    return groups;
+  }
+
+  // Fetch pricing items to get manufacturer info
+  const pricingMap = await getPricingByIds(pricingItemIds, organizationId);
+
+  console.log(`[AutoScope] Fetched pricing for ${pricingMap.size}/${pricingItemIds.length} items`);
+
+  // Group assignments by manufacturer
+  for (const assignment of materialAssignments) {
+    const pricingItem = pricingMap.get(assignment.pricing_item_id);
+
+    if (!pricingItem) {
+      console.warn(`[AutoScope] No pricing found for ID: ${assignment.pricing_item_id}`);
+      continue;
+    }
+
+    const manufacturer = pricingItem.manufacturer;
+    if (!manufacturer || manufacturer.trim() === '') {
+      console.warn(`[AutoScope] No manufacturer for SKU: ${pricingItem.sku}`);
+      continue;
+    }
+
+    // Initialize group if needed
+    if (!groups[manufacturer]) {
+      groups[manufacturer] = {
+        manufacturer,
+        area_sqft: 0,
+        linear_ft: 0,
+        piece_count: 0,
+        detection_ids: [],
+      };
+    }
+
+    // Aggregate based on unit type
+    const unit = assignment.unit?.toUpperCase() || '';
+    const quantity = Number(assignment.quantity) || 0;
+
+    if (unit === 'SF' || unit === 'SQFT' || unit === 'SQ FT') {
+      groups[manufacturer].area_sqft += quantity;
+    } else if (unit === 'LF' || unit === 'LINEAR FT' || unit === 'LINFT') {
+      groups[manufacturer].linear_ft += quantity;
+    } else if (unit === 'EA' || unit === 'EACH' || unit === 'PC' || unit === 'PIECE') {
+      groups[manufacturer].piece_count += quantity;
+    } else {
+      // Default to area for unknown units (most siding is area-based)
+      groups[manufacturer].area_sqft += quantity;
+    }
+
+    // Track detection IDs for provenance
+    if (assignment.detection_id) {
+      groups[manufacturer].detection_ids.push(assignment.detection_id);
+    }
+  }
+
+  // Log results
+  console.log(`[AutoScope] Built ${Object.keys(groups).length} manufacturer groups:`);
+  for (const [mfr, data] of Object.entries(groups)) {
+    console.log(`  ${mfr}:`);
+    console.log(`    - Area: ${data.area_sqft.toFixed(2)} SF`);
+    console.log(`    - Linear: ${data.linear_ft.toFixed(2)} LF`);
+    console.log(`    - Pieces: ${data.piece_count}`);
+    console.log(`    - Detections: ${data.detection_ids.length}`);
+  }
+
+  return groups;
+}
+
+/**
+ * Build a manufacturer-specific MeasurementContext
+ * Replaces facade_area_sqft with the manufacturer's specific area
+ * Used for evaluating manufacturer-specific auto-scope rules
+ */
+export function buildManufacturerContext(
+  baseContext: MeasurementContext,
+  manufacturerData: ManufacturerMeasurements
+): MeasurementContext {
+  // Create a copy of the base context
+  const mfrContext: MeasurementContext = { ...baseContext };
+
+  // Override area-based measurements with manufacturer-specific values
+  mfrContext.facade_sqft = manufacturerData.area_sqft;
+  mfrContext.facade_area_sqft = manufacturerData.area_sqft;
+  mfrContext.gross_wall_area_sqft = manufacturerData.area_sqft;
+
+  // For net siding area, use manufacturer's area (assuming similar openings ratio)
+  // Or we could scale it proportionally, but for simplicity we use the direct value
+  const areaRatio = baseContext.facade_sqft > 0
+    ? manufacturerData.area_sqft / baseContext.facade_sqft
+    : 1;
+  mfrContext.net_siding_area_sqft = baseContext.net_siding_area_sqft * areaRatio;
+
+  // Override linear measurements if manufacturer has them
+  if (manufacturerData.linear_ft > 0) {
+    mfrContext.level_starter_lf = manufacturerData.linear_ft;
+  }
+
+  // Scale perimeter proportionally based on area ratio
+  mfrContext.facade_perimeter_lf = baseContext.facade_perimeter_lf * areaRatio;
+
+  return mfrContext;
+}
+
+// ============================================================================
 // EVALUATE TRIGGER CONDITIONS (FIXED for actual DB format)
 // ============================================================================
 
@@ -494,11 +650,33 @@ export function evaluateFormula(
 // MAIN: GENERATE AUTO-SCOPE ITEMS V2
 // ============================================================================
 
+/**
+ * Options for generateAutoScopeItemsV2
+ */
+export interface AutoScopeV2Options {
+  /** Skip siding panel rules when user has material assignments */
+  skipSidingPanels?: boolean;
+  /** Manufacturer groups for per-manufacturer rule application */
+  manufacturerGroups?: ManufacturerGroups;
+}
+
+/**
+ * Generate auto-scope line items with manufacturer-aware rule application
+ *
+ * Rules with manufacturer_filter = null (generic rules):
+ *   → Use total project measurements (e.g., WRB for entire facade)
+ *
+ * Rules with manufacturer_filter = ['James Hardie']:
+ *   → Only apply to James Hardie products, using Hardie's SF only
+ *
+ * Rules with manufacturer_filter = ['Engage Building Products']:
+ *   → Only apply to FastPlank products, using FastPlank's SF only
+ */
 export async function generateAutoScopeItemsV2(
   extractionId?: string,
   webhookMeasurements?: Record<string, any>,
   organizationId?: string,
-  options?: { skipSidingPanels?: boolean }
+  options?: AutoScopeV2Options
 ): Promise<AutoScopeV2Result> {
   const result: AutoScopeV2Result = {
     line_items: [],
@@ -508,7 +686,10 @@ export async function generateAutoScopeItemsV2(
     measurement_source: 'fallback',
   };
 
-  // 1. Build measurement context
+  const manufacturerGroups = options?.manufacturerGroups || {};
+  const manufacturerNames = Object.keys(manufacturerGroups);
+
+  // 1. Build measurement context (total project measurements)
   let dbMeasurements: CadHoverMeasurements | null = null;
 
   if (extractionId) {
@@ -522,61 +703,136 @@ export async function generateAutoScopeItemsV2(
     result.measurement_source = 'webhook';
   }
 
-  const context = buildMeasurementContext(dbMeasurements, webhookMeasurements);
+  const totalContext = buildMeasurementContext(dbMeasurements, webhookMeasurements);
 
   // 2. Fetch auto-scope rules
   const rules = await fetchAutoScopeRules();
   result.rules_evaluated = rules.length;
 
   console.log(`📋 Evaluating ${rules.length} auto-scope rules...`);
+  console.log(`   Total project area: ${totalContext.facade_area_sqft.toFixed(2)} SF`);
+  if (manufacturerNames.length > 0) {
+    console.log(`   Manufacturer groups: ${manufacturerNames.join(', ')}`);
+  } else {
+    console.log(`   No manufacturer groups - only generic rules will apply`);
+  }
 
   // 3. Evaluate each rule
-  const triggeredRules: Array<{ rule: DbAutoScopeRule; quantity: number }> = [];
+  // Store triggered rules with their context info for line item generation
+  const triggeredRules: Array<{
+    rule: DbAutoScopeRule;
+    quantity: number;
+    manufacturer?: string;  // Which manufacturer this applies to (undefined = generic)
+  }> = [];
 
   // Siding-related material categories to skip when user has siding assignments
   const SIDING_MATERIAL_CATEGORIES = ['siding', 'siding_panels', 'lap_siding', 'shingle_siding', 'panel_siding', 'vertical_siding'];
 
   for (const rule of rules) {
     // Skip siding panel rules if material_assignments already cover siding
-    // This prevents duplicate "Siding Panels - Main Product" when user has assigned HardiePlank, etc.
     const isSidingCategory = SIDING_MATERIAL_CATEGORIES.includes(rule.material_category?.toLowerCase() || '');
     if (options?.skipSidingPanels && isSidingCategory) {
-      console.log(`  ⏭️ Rule ${rule.rule_id}: ${rule.rule_name} → SKIPPED (user has siding assignments, category: ${rule.material_category})`);
+      console.log(`  ⏭️ Rule ${rule.rule_id}: ${rule.rule_name} → SKIPPED (user has siding assignments)`);
       result.rules_skipped.push(`${rule.material_sku}: skipped - user has siding assignments`);
       continue;
     }
 
-    const { applies, reason } = shouldApplyRule(rule, context);
+    // =========================================================================
+    // MANUFACTURER-AWARE RULE APPLICATION
+    // =========================================================================
 
-    if (applies) {
-      const { result: quantity, error } = evaluateFormula(rule.quantity_formula, context);
+    const hasManufacturerFilter = rule.manufacturer_filter && rule.manufacturer_filter.length > 0;
 
-      if (error) {
-        console.warn(`⚠️ Rule ${rule.rule_id} (${rule.rule_name}): Formula error - ${error}`);
-        result.rules_skipped.push(`${rule.material_sku}: formula error - ${error}`);
+    if (!hasManufacturerFilter) {
+      // =====================================================================
+      // GENERIC RULE: Apply to total project measurements
+      // =====================================================================
+      const { applies, reason } = shouldApplyRule(rule, totalContext);
+
+      if (applies) {
+        const { result: quantity, error } = evaluateFormula(rule.quantity_formula, totalContext);
+
+        if (error) {
+          console.warn(`⚠️ Rule ${rule.rule_id} (${rule.rule_name}): Formula error - ${error}`);
+          result.rules_skipped.push(`${rule.material_sku}: formula error - ${error}`);
+          continue;
+        }
+
+        if (quantity > 0) {
+          triggeredRules.push({ rule, quantity, manufacturer: undefined });
+          result.rules_triggered++;
+          console.log(`  ✓ Rule ${rule.rule_id}: ${rule.rule_name} [GENERIC: ${totalContext.facade_area_sqft.toFixed(0)} SF] → ${Math.ceil(quantity)} ${rule.unit} (${reason})`);
+        } else {
+          result.rules_skipped.push(`${rule.material_sku}: quantity=0`);
+          console.log(`  ○ Rule ${rule.rule_id}: ${rule.rule_name} → 0 (formula returned 0)`);
+        }
+      } else {
+        result.rules_skipped.push(`${rule.material_sku}: ${reason}`);
+        console.log(`  ✗ Rule ${rule.rule_id}: ${rule.rule_name} → skipped (${reason})`);
+      }
+    } else {
+      // =====================================================================
+      // MANUFACTURER-SPECIFIC RULE: Apply only to matching manufacturers
+      // =====================================================================
+
+      // Find matching manufacturer groups
+      const matchingManufacturers = rule.manufacturer_filter!.filter(
+        mfr => manufacturerGroups[mfr] !== undefined
+      );
+
+      if (matchingManufacturers.length === 0) {
+        // No matching manufacturers in the project
+        result.rules_skipped.push(`${rule.material_sku}: no matching manufacturer groups`);
+        console.log(`  ✗ Rule ${rule.rule_id}: ${rule.rule_name} → skipped (no matching manufacturers: ${rule.manufacturer_filter!.join(', ')})`);
         continue;
       }
 
-      if (quantity > 0) {
-        triggeredRules.push({ rule, quantity });
-        result.rules_triggered++;
-        console.log(`  ✓ Rule ${rule.rule_id}: ${rule.rule_name} → ${Math.ceil(quantity)} ${rule.unit} (${reason})`);
-      } else {
-        result.rules_skipped.push(`${rule.material_sku}: quantity=0`);
-        console.log(`  ○ Rule ${rule.rule_id}: ${rule.rule_name} → 0 (formula returned 0)`);
+      // Apply rule to each matching manufacturer's measurements
+      for (const mfrName of matchingManufacturers) {
+        const mfrData = manufacturerGroups[mfrName];
+
+        // Skip if manufacturer has no area (nothing to calculate)
+        if (mfrData.area_sqft <= 0 && mfrData.linear_ft <= 0) {
+          console.log(`  ○ Rule ${rule.rule_id}: ${rule.rule_name} [${mfrName}] → skipped (no area/linear)`);
+          continue;
+        }
+
+        // Build manufacturer-specific context
+        const mfrContext = buildManufacturerContext(totalContext, mfrData);
+
+        const { applies, reason } = shouldApplyRule(rule, mfrContext);
+
+        if (applies) {
+          const { result: quantity, error } = evaluateFormula(rule.quantity_formula, mfrContext);
+
+          if (error) {
+            console.warn(`⚠️ Rule ${rule.rule_id} (${rule.rule_name}) [${mfrName}]: Formula error - ${error}`);
+            result.rules_skipped.push(`${rule.material_sku} [${mfrName}]: formula error - ${error}`);
+            continue;
+          }
+
+          if (quantity > 0) {
+            triggeredRules.push({ rule, quantity, manufacturer: mfrName });
+            result.rules_triggered++;
+            console.log(`  ✓ Rule ${rule.rule_id}: ${rule.rule_name} [${mfrName}: ${mfrData.area_sqft.toFixed(0)} SF] → ${Math.ceil(quantity)} ${rule.unit} (${reason})`);
+          } else {
+            result.rules_skipped.push(`${rule.material_sku} [${mfrName}]: quantity=0`);
+            console.log(`  ○ Rule ${rule.rule_id}: ${rule.rule_name} [${mfrName}] → 0 (formula returned 0)`);
+          }
+        } else {
+          result.rules_skipped.push(`${rule.material_sku} [${mfrName}]: ${reason}`);
+          console.log(`  ✗ Rule ${rule.rule_id}: ${rule.rule_name} [${mfrName}] → skipped (${reason})`);
+        }
       }
-    } else {
-      result.rules_skipped.push(`${rule.material_sku}: ${reason}`);
-      console.log(`  ✗ Rule ${rule.rule_id}: ${rule.rule_name} → skipped (${reason})`);
     }
   }
 
   // 4. Fetch pricing for triggered SKUs
-  const skus = triggeredRules.map(tr => tr.rule.material_sku);
+  const skus = [...new Set(triggeredRules.map(tr => tr.rule.material_sku))];
   const pricingMap = await getPricingBySkus(skus, organizationId);
 
   // 5. Build line items with pricing
-  for (const { rule, quantity } of triggeredRules) {
+  for (const { rule, quantity, manufacturer } of triggeredRules) {
     const pricing = pricingMap.get(rule.material_sku);
 
     const materialUnitCost = Number(pricing?.material_cost || 0);
@@ -584,9 +840,14 @@ export async function generateAutoScopeItemsV2(
     const totalLaborRate = pricing?.total_labor_cost || calculateTotalLabor(laborUnitCost);
     const finalQuantity = Math.ceil(quantity);
 
+    // For manufacturer-specific rules, include manufacturer in description
+    const description = manufacturer
+      ? `${rule.rule_name} (${manufacturer})`
+      : rule.rule_name;
+
     const lineItem: AutoScopeLineItem = {
-      description: rule.rule_name,  // FIXED: was product_name
-      sku: rule.material_sku,       // FIXED: was sku
+      description,
+      sku: rule.material_sku,
       quantity: finalQuantity,
       unit: rule.output_unit || rule.unit,
       category: rule.material_category,
@@ -598,9 +859,11 @@ export async function generateAutoScopeItemsV2(
       labor_extended: Math.round(finalQuantity * totalLaborRate * 100) / 100,
 
       calculation_source: 'auto-scope',
-      rule_id: String(rule.rule_id),  // FIXED: was id
+      rule_id: String(rule.rule_id),
       formula_used: rule.quantity_formula,
-      notes: rule.description || undefined,
+      notes: manufacturer
+        ? `${rule.description || ''} [Applied to ${manufacturer} products]`.trim()
+        : rule.description || undefined,
     };
 
     result.line_items.push(lineItem);
@@ -636,6 +899,7 @@ function getFallbackRules(): DbAutoScopeRule[] {
       active: true,
       created_at: now,
       updated_at: now,
+      manufacturer_filter: null, // Generic rule - applies to all
     },
     {
       rule_id: 2,
@@ -655,6 +919,7 @@ function getFallbackRules(): DbAutoScopeRule[] {
       active: true,
       created_at: now,
       updated_at: now,
+      manufacturer_filter: null, // Generic rule - applies to all
     },
     {
       rule_id: 3,
@@ -674,6 +939,7 @@ function getFallbackRules(): DbAutoScopeRule[] {
       active: true,
       created_at: now,
       updated_at: now,
+      manufacturer_filter: null, // Generic rule - applies to all
     },
   ];
 }

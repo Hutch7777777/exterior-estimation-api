@@ -10,7 +10,8 @@ import {
 } from '../../services/pricing';
 import {
   generateAutoScopeItemsV2,
-  buildMeasurementContext
+  buildMeasurementContext,
+  buildManufacturerGroups,
 } from './autoscope-v2';
 import { AutoScopeLineItem } from '../../types/autoscope';
 import { getSupabaseClient, isDatabaseConfigured } from '../../services/database';
@@ -854,11 +855,37 @@ export async function calculateWithAutoScopeV2(
   console.log('✂️ [Orchestrator] webhookMeasurements.trim:', JSON.stringify((webhookMeasurements as any)?.trim, null, 2));
   console.log('✂️ [Orchestrator] enrichedMeasurements.trim:', JSON.stringify(enrichedMeasurements.trim, null, 2));
 
+  // =========================================================================
+  // BUILD MANUFACTURER GROUPS from material assignments
+  // This enables per-manufacturer auto-scope rules (e.g., Hardie nails for Hardie siding)
+  // =========================================================================
+  console.log('🏭 Building manufacturer groups from material assignments...');
+
+  const manufacturerGroups = await buildManufacturerGroups(
+    materialAssignments.map(a => ({
+      pricing_item_id: a.pricing_item_id,
+      quantity: a.quantity,
+      unit: a.unit,
+      area_sqft: a.area_sf ?? undefined,  // Map area_sf to area_sqft, convert null to undefined
+      perimeter_lf: a.perimeter_lf ?? undefined,  // Convert null to undefined
+      detection_id: a.detection_id,
+    })),
+    organizationId
+  );
+
+  console.log(`🏭 Built ${Object.keys(manufacturerGroups).length} manufacturer groups`);
+  for (const [mfr, data] of Object.entries(manufacturerGroups)) {
+    console.log(`   ${mfr}: ${data.area_sqft.toFixed(0)} SF, ${data.linear_ft.toFixed(0)} LF`);
+  }
+
   const autoScopeResult = await generateAutoScopeItemsV2(
     extractionId,
     enrichedMeasurements,
     organizationId,
-    { skipSidingPanels: hasSidingAssignments }
+    {
+      skipSidingPanels: hasSidingAssignments,
+      manufacturerGroups,  // Pass manufacturer groups for per-manufacturer rules
+    }
   );
 
   // =========================================================================

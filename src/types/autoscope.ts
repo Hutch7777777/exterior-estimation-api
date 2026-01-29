@@ -176,3 +176,40 @@ export interface AutoScopeV2Result {
   rules_skipped: string[];
   measurement_source: 'database' | 'webhook' | 'fallback';
 }
+
+// ============================================================================
+// MANUFACTURER GROUPING TYPES
+// Used for per-manufacturer auto-scope rule application
+// ============================================================================
+
+/**
+ * Aggregated measurements for a single manufacturer's products
+ * Used to calculate manufacturer-specific auto-scope quantities
+ *
+ * Example: If a project has 800 SF of James Hardie and 700 SF of FastPlank,
+ * there will be two ManufacturerMeasurements entries.
+ */
+export interface ManufacturerMeasurements {
+  /** Manufacturer name (e.g., "James Hardie", "Engage Building Products") */
+  manufacturer: string;
+  /** Total square footage of this manufacturer's siding products */
+  area_sqft: number;
+  /** Total linear feet of this manufacturer's trim/linear products */
+  linear_ft: number;
+  /** Total piece count of this manufacturer's discrete items */
+  piece_count: number;
+  /** Detection IDs that contributed to this manufacturer's totals */
+  detection_ids: string[];
+}
+
+/**
+ * Map of manufacturer name to their aggregated measurements
+ * Key is the manufacturer name from pricing_items table
+ *
+ * Example:
+ * {
+ *   "James Hardie": { area_sqft: 800, linear_ft: 120, ... },
+ *   "Engage Building Products": { area_sqft: 700, linear_ft: 100, ... }
+ * }
+ */
+export type ManufacturerGroups = Record<string, ManufacturerMeasurements>;
