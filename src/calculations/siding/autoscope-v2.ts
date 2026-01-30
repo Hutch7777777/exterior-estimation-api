@@ -21,6 +21,7 @@ import {
   ManufacturerGroups,
   ManufacturerMeasurements
 } from '../../types/autoscope';
+import { PerMaterialMeasurements } from '../../types/webhook';
 // PricingItem type used indirectly via getPricingByIds return type
 
 // ============================================================================
@@ -350,13 +351,18 @@ export interface MaterialAssignmentForGrouping {
  * Group material assignments by manufacturer
  * Enriches assignments with manufacturer info from pricing_items table
  *
+ * V8.0: Also merges per_material_measurements from spatial containment analysis
+ * when provided, which adds per-material opening measurements (windows, doors, garages)
+ *
  * @param materialAssignments - Array of material assignments from Detection Editor
  * @param organizationId - Optional org ID for pricing overrides
+ * @param perMaterialMeasurements - V8.0: Per-material measurements from spatial containment
  * @returns ManufacturerGroups map with aggregated measurements per manufacturer
  */
 export async function buildManufacturerGroups(
   materialAssignments: MaterialAssignmentForGrouping[],
-  organizationId?: string
+  organizationId?: string,
+  perMaterialMeasurements?: PerMaterialMeasurements
 ): Promise<ManufacturerGroups> {
   const groups: ManufacturerGroups = {};
 
@@ -438,6 +444,73 @@ export async function buildManufacturerGroups(
     }
   }
 
+  // =========================================================================
+  // V8.0: SPATIAL CONTAINMENT - Merge per-material opening measurements
+  // =========================================================================
+  if (perMaterialMeasurements && Object.keys(perMaterialMeasurements).length > 0) {
+    console.log(`[AutoScope V8.0] Merging per-material measurements from spatial containment`);
+
+    for (const [materialId, perMatMeasures] of Object.entries(perMaterialMeasurements)) {
+      // Skip 'unassigned' bucket if it has no meaningful data
+      if (materialId === 'unassigned' && perMatMeasures.window_count === 0 && perMatMeasures.door_count === 0) {
+        console.log(`[AutoScope V8.0] Skipping 'unassigned' bucket (no openings)`);
+        continue;
+      }
+
+      const manufacturer = perMatMeasures.manufacturer;
+      if (!manufacturer || manufacturer.trim() === '') {
+        console.warn(`[AutoScope V8.0] No manufacturer for material ID: ${materialId}`);
+        continue;
+      }
+
+      // If this manufacturer doesn't exist in groups yet, create it
+      // (this can happen if spatial containment data includes manufacturers not in material_assignments)
+      if (!groups[manufacturer]) {
+        groups[manufacturer] = {
+          manufacturer,
+          area_sqft: perMatMeasures.facade_sqft || 0,
+          linear_ft: 0,
+          piece_count: 0,
+          detection_ids: perMatMeasures.facades || [],
+        };
+      }
+
+      const group = groups[manufacturer];
+
+      // Merge opening measurements into the manufacturer group
+      // These are the key values for spatial containment - per-material opening measurements
+      group.window_perimeter_lf = (group.window_perimeter_lf || 0) + (perMatMeasures.window_perimeter_lf || 0);
+      group.door_perimeter_lf = (group.door_perimeter_lf || 0) + (perMatMeasures.door_perimeter_lf || 0);
+      group.garage_perimeter_lf = (group.garage_perimeter_lf || 0) + (perMatMeasures.garage_perimeter_lf || 0);
+      group.window_count = (group.window_count || 0) + (perMatMeasures.window_count || 0);
+      group.door_count = (group.door_count || 0) + (perMatMeasures.door_count || 0);
+      group.garage_count = (group.garage_count || 0) + (perMatMeasures.garage_count || 0);
+      group.openings_area_sqft = (group.openings_area_sqft || 0) + (perMatMeasures.openings_area_sqft || 0);
+
+      // Compute total openings perimeter
+      group.total_openings_perimeter_lf =
+        (group.window_perimeter_lf || 0) +
+        (group.door_perimeter_lf || 0) +
+        (group.garage_perimeter_lf || 0);
+
+      console.log(`[AutoScope V8.0] ${manufacturer}: ${group.window_count} windows (${group.window_perimeter_lf?.toFixed(1)} LF), ${group.door_count} doors (${group.door_perimeter_lf?.toFixed(1)} LF), ${group.garage_count} garages (${group.garage_perimeter_lf?.toFixed(1)} LF)`);
+    }
+
+    // Log spatial containment summary
+    console.log(`[AutoScope V8.0] ═══════════════════════════════════════════`);
+    console.log(`[AutoScope V8.0] SPATIAL CONTAINMENT SUMMARY:`);
+    for (const [mfr, group] of Object.entries(groups)) {
+      const openingLF = group.total_openings_perimeter_lf || 0;
+      const windowCount = group.window_count || 0;
+      const doorCount = group.door_count || 0;
+      const garageCount = group.garage_count || 0;
+      console.log(`[AutoScope V8.0]   ${mfr}:`);
+      console.log(`[AutoScope V8.0]     Facade: ${group.area_sqft.toFixed(1)} SF`);
+      console.log(`[AutoScope V8.0]     Openings: ${windowCount} windows + ${doorCount} doors + ${garageCount} garages = ${openingLF.toFixed(1)} LF`);
+    }
+    console.log(`[AutoScope V8.0] ═══════════════════════════════════════════`);
+  }
+
   // Log results
   console.log(`[AutoScope] Built ${Object.keys(groups).length} manufacturer groups:`);
   for (const [mfr, data] of Object.entries(groups)) {
@@ -446,6 +519,9 @@ export async function buildManufacturerGroups(
     console.log(`    - Linear: ${data.linear_ft.toFixed(2)} LF`);
     console.log(`    - Pieces: ${data.piece_count}`);
     console.log(`    - Detections: ${data.detection_ids.length}`);
+    if (data.total_openings_perimeter_lf !== undefined) {
+      console.log(`    - Openings Perimeter: ${data.total_openings_perimeter_lf.toFixed(2)} LF (V8.0 spatial)`);
+    }
   }
 
   return groups;
@@ -455,6 +531,10 @@ export async function buildManufacturerGroups(
  * Build a manufacturer-specific MeasurementContext
  * Replaces facade_area_sqft with the manufacturer's specific area
  * Used for evaluating manufacturer-specific auto-scope rules
+ *
+ * V8.0: If per-material opening measurements are available (from spatial containment),
+ * use them instead of scaling from total project measurements. This enables accurate
+ * per-manufacturer calculations for accessories like J-channel and caulk.
  */
 export function buildManufacturerContext(
   baseContext: MeasurementContext,
@@ -484,6 +564,88 @@ export function buildManufacturerContext(
   mfrContext.facade_perimeter_lf = manufacturerData.linear_ft > 0
     ? manufacturerData.linear_ft
     : baseContext.facade_perimeter_lf * areaRatio;
+
+  // =========================================================================
+  // V8.0: SPATIAL CONTAINMENT - Use per-material opening measurements
+  // If spatial containment data is available, use manufacturer-specific
+  // opening measurements instead of scaling from total project measurements
+  // =========================================================================
+
+  const hasSpatialData = manufacturerData.window_perimeter_lf !== undefined ||
+                         manufacturerData.door_perimeter_lf !== undefined ||
+                         manufacturerData.garage_perimeter_lf !== undefined;
+
+  if (hasSpatialData) {
+    // Window measurements
+    if (manufacturerData.window_perimeter_lf !== undefined) {
+      mfrContext.window_perimeter_lf = manufacturerData.window_perimeter_lf;
+      mfrContext.window_count = manufacturerData.window_count || 0;
+      // Scale other window measurements proportionally based on window count ratio
+      const windowRatio = baseContext.window_count > 0
+        ? (manufacturerData.window_count || 0) / baseContext.window_count
+        : 0;
+      mfrContext.window_area_sqft = baseContext.window_area_sqft * windowRatio;
+      mfrContext.window_head_lf = baseContext.window_head_lf * windowRatio;
+      mfrContext.window_sill_lf = baseContext.window_sill_lf * windowRatio;
+      mfrContext.window_jamb_lf = baseContext.window_jamb_lf * windowRatio;
+    }
+
+    // Door measurements
+    if (manufacturerData.door_perimeter_lf !== undefined) {
+      mfrContext.door_perimeter_lf = manufacturerData.door_perimeter_lf;
+      mfrContext.door_count = manufacturerData.door_count || 0;
+      // Scale other door measurements proportionally
+      const doorRatio = baseContext.door_count > 0
+        ? (manufacturerData.door_count || 0) / baseContext.door_count
+        : 0;
+      mfrContext.door_area_sqft = baseContext.door_area_sqft * doorRatio;
+      mfrContext.door_head_lf = baseContext.door_head_lf * doorRatio;
+      mfrContext.door_jamb_lf = baseContext.door_jamb_lf * doorRatio;
+    }
+
+    // Garage measurements
+    if (manufacturerData.garage_perimeter_lf !== undefined) {
+      mfrContext.garage_perimeter_lf = manufacturerData.garage_perimeter_lf;
+      mfrContext.garage_count = manufacturerData.garage_count || 0;
+      // Scale other garage measurements proportionally
+      const garageRatio = baseContext.garage_count > 0
+        ? (manufacturerData.garage_count || 0) / baseContext.garage_count
+        : 0;
+      mfrContext.garage_area_sqft = baseContext.garage_area_sqft * garageRatio;
+    }
+
+    // Openings area
+    if (manufacturerData.openings_area_sqft !== undefined) {
+      mfrContext.openings_area_sqft = manufacturerData.openings_area_sqft;
+      mfrContext.total_openings_area_sqft = manufacturerData.openings_area_sqft;
+    }
+
+    // Recompute total openings perimeter from spatial containment data
+    if (manufacturerData.total_openings_perimeter_lf !== undefined) {
+      mfrContext.total_opening_perimeter_lf = manufacturerData.total_openings_perimeter_lf;
+      mfrContext.openings_perimeter_lf = manufacturerData.total_openings_perimeter_lf;
+    } else {
+      // Compute from individual components
+      const totalPerim =
+        (manufacturerData.window_perimeter_lf || 0) +
+        (manufacturerData.door_perimeter_lf || 0) +
+        (manufacturerData.garage_perimeter_lf || 0);
+      mfrContext.total_opening_perimeter_lf = totalPerim;
+      mfrContext.openings_perimeter_lf = totalPerim;
+    }
+
+    // Recompute total openings count
+    const totalCount =
+      (manufacturerData.window_count || 0) +
+      (manufacturerData.door_count || 0) +
+      (manufacturerData.garage_count || 0);
+    mfrContext.total_openings_count = totalCount;
+    mfrContext.openings_count = totalCount;
+
+    console.log(`[AutoScope V8.0] ${manufacturerData.manufacturer} context using spatial containment:`);
+    console.log(`[AutoScope V8.0]   openings_perimeter_lf = ${mfrContext.openings_perimeter_lf.toFixed(1)}`);
+    console.log(`[AutoScope V8.0]   openings_count = ${mfrContext.openings_count}`);
+  }
 
   return mfrContext;
 }
@@ -718,6 +880,15 @@ export async function generateAutoScopeItemsV2(
     console.log(`   Manufacturer groups: ${manufacturerNames.join(', ')}`);
   } else {
     console.log(`   No manufacturer groups - only generic rules will apply`);
+  }
+
+  // V8.0: Log spatial containment status
+  if (options?.spatialContainment?.enabled) {
+    console.log(`[AutoScope V8.0] Spatial containment ENABLED`);
+    console.log(`[AutoScope V8.0] Matched ${options.spatialContainment.matched_openings}/${options.spatialContainment.total_openings} openings`);
+    if (options.spatialContainment.unmatched_openings && options.spatialContainment.unmatched_openings > 0) {
+      console.warn(`[AutoScope V8.0] ⚠️ ${options.spatialContainment.unmatched_openings} unmatched openings (will use project-wide measurements)`);
+    }
   }
 
   // 3. Evaluate each rule

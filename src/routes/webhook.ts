@@ -51,6 +51,15 @@ router.post('/siding-estimator', async (req: Request, res: Response) => {
       console.log('🔍 detection_counts from webhook:', JSON.stringify(webhookRequest.detection_counts, null, 2));
       console.log('🎯 belly_band in detection_counts:', webhookRequest.detection_counts?.belly_band);
 
+      // V8.0: Log spatial containment parameters
+      if (webhookRequest.spatial_containment?.enabled) {
+        console.log('🎯 [V8.0] Spatial containment ENABLED');
+        console.log(`   Matched: ${webhookRequest.spatial_containment.matched_openings}/${webhookRequest.spatial_containment.total_openings} openings`);
+      }
+      if (webhookRequest.per_material_measurements) {
+        console.log('🎯 [V8.0] Per-material measurements received:', Object.keys(webhookRequest.per_material_measurements).length, 'materials');
+      }
+
       // Extract trim data - can be at top level OR nested in measurements
       const trimData = webhookRequest.trim || (webhookRequest.measurements as any)?.trim;
       console.log('✂️ Trim data from webhook:', JSON.stringify(trimData, null, 2));
@@ -63,13 +72,16 @@ router.post('/siding-estimator', async (req: Request, res: Response) => {
       };
 
       // Use V2 orchestrator which combines material assignments with auto-scope
+      // V8.0: Pass per_material_measurements and spatial_containment for per-manufacturer calculations
       const result = await calculateWithAutoScopeV2(
         webhookRequest.material_assignments,
         webhookRequest.extraction_id,
         enrichedMeasurements,
         webhookRequest.organization_id,
         markupRate,
-        webhookRequest.detection_counts
+        webhookRequest.detection_counts,
+        webhookRequest.per_material_measurements,     // V8.0
+        webhookRequest.spatial_containment            // V8.0
       );
 
       // Transform to webhook response format
@@ -202,6 +214,12 @@ router.post('/calculate-siding', async (req: Request, res: Response) => {
       console.log('🔍 detection_counts from webhook:', JSON.stringify(webhookRequest.detection_counts, null, 2));
       console.log('🎯 belly_band in detection_counts:', webhookRequest.detection_counts?.belly_band);
 
+      // V8.0: Log spatial containment parameters
+      if (webhookRequest.spatial_containment?.enabled) {
+        console.log('🎯 [V8.0] Spatial containment ENABLED (alias)');
+        console.log(`   Matched: ${webhookRequest.spatial_containment.matched_openings}/${webhookRequest.spatial_containment.total_openings} openings`);
+      }
+
       // Extract trim data - can be at top level OR nested in measurements
       const trimData = webhookRequest.trim || (webhookRequest.measurements as any)?.trim;
       console.log('✂️ Trim data from webhook (alias):', JSON.stringify(trimData, null, 2));
@@ -214,13 +232,16 @@ router.post('/calculate-siding', async (req: Request, res: Response) => {
       };
 
       // Use V2 orchestrator which combines material assignments with auto-scope
+      // V8.0: Pass per_material_measurements and spatial_containment for per-manufacturer calculations
       const result = await calculateWithAutoScopeV2(
         webhookRequest.material_assignments,
         webhookRequest.extraction_id,
         enrichedMeasurements,
         webhookRequest.organization_id,
         markupRate,
-        webhookRequest.detection_counts
+        webhookRequest.detection_counts,
+        webhookRequest.per_material_measurements,     // V8.0
+        webhookRequest.spatial_containment            // V8.0
       );
 
       const response: WebhookResponse = {

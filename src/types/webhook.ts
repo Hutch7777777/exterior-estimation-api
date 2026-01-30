@@ -140,7 +140,62 @@ export interface WebhookRequest {
   source?: 'hover' | 'cad' | 'manual';
   extraction_id?: string;
   confidence?: number;
+
+  // V8.0: Per-material measurements from spatial containment analysis
+  // When spatial containment is enabled, n8n provides opening measurements
+  // grouped by which material's facade contains each opening
+  per_material_measurements?: PerMaterialMeasurements;
+
+  // V8.0: Spatial containment metadata
+  spatial_containment?: {
+    enabled: boolean;
+    matched_openings: number;
+    total_openings: number;
+    unmatched_openings: number;
+  };
 }
+
+// ============================================================================
+// V8.0: PER-MATERIAL MEASUREMENTS (Spatial Containment)
+// ============================================================================
+
+/**
+ * Per-material measurement data from spatial containment analysis
+ * Each entry represents the openings (windows, doors, garages) that are
+ * geometrically contained within a specific material's facade areas.
+ */
+export interface PerMaterialMeasurement {
+  /** Pricing item ID (UUID) of the material */
+  material_id: string;
+  /** SKU of the material (may be null for unassigned) */
+  material_sku: string | null;
+  /** Manufacturer name from pricing_items table */
+  manufacturer: string;
+  /** Total facade area covered by this material */
+  facade_sqft: number;
+  /** Window perimeter contained within this material's facades */
+  window_perimeter_lf: number;
+  /** Door perimeter contained within this material's facades */
+  door_perimeter_lf: number;
+  /** Garage perimeter contained within this material's facades */
+  garage_perimeter_lf: number;
+  /** Count of windows contained within this material's facades */
+  window_count: number;
+  /** Count of doors contained within this material's facades */
+  door_count: number;
+  /** Count of garages contained within this material's facades */
+  garage_count: number;
+  /** Total area of openings contained within this material's facades */
+  openings_area_sqft: number;
+  /** Detection IDs of facades using this material (for provenance) */
+  facades: string[];
+}
+
+/**
+ * Map of material_id to per-material measurements
+ * Key is the pricing_item_id (UUID) or 'unassigned' for unmatched openings
+ */
+export type PerMaterialMeasurements = Record<string, PerMaterialMeasurement>;
 
 // ============================================================================
 // WEBHOOK RESPONSE (for n8n Excel generation)

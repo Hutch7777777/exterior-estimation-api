@@ -3,7 +3,7 @@
  * Uses database-driven auto-scope rules for complete takeoff generation
  */
 
-import { MaterialAssignment, WebhookMeasurements } from '../../types/webhook';
+import { MaterialAssignment, WebhookMeasurements, PerMaterialMeasurements } from '../../types/webhook';
 import {
   getPricingByIds,
   PricingItem
@@ -565,7 +565,15 @@ export async function calculateWithAutoScopeV2(
     display_name: string;
     measurement_type: 'count' | 'area' | 'linear';
     unit: string;
-  }>
+  }>,
+  // V8.0: Spatial Containment parameters
+  perMaterialMeasurements?: PerMaterialMeasurements,
+  spatialContainment?: {
+    enabled: boolean;
+    matched_openings: number;
+    total_openings: number;
+    unmatched_openings?: number;
+  }
 ): Promise<V2CalculationResult> {
   // =========================================================================
   // DEBUG: Log ALL incoming parameters at function entry
@@ -583,6 +591,21 @@ export async function calculateWithAutoScopeV2(
     total_lf: detectionCounts?.belly_band?.total_lf,
     count: detectionCounts?.belly_band?.count
   });
+
+  // V8.0: Log spatial containment parameters
+  if (spatialContainment?.enabled) {
+    console.log('🎯 [Orchestrator V8.0] SPATIAL CONTAINMENT ENABLED');
+    console.log(`   Matched openings: ${spatialContainment.matched_openings}/${spatialContainment.total_openings}`);
+    if (spatialContainment.unmatched_openings) {
+      console.log(`   Unmatched openings: ${spatialContainment.unmatched_openings}`);
+    }
+  }
+  if (perMaterialMeasurements && Object.keys(perMaterialMeasurements).length > 0) {
+    console.log('🎯 [Orchestrator V8.0] Per-material measurements received:');
+    for (const [matId, measures] of Object.entries(perMaterialMeasurements)) {
+      console.log(`   ${measures.manufacturer}: ${measures.facade_sqft.toFixed(0)} SF, ${measures.window_count} windows (${measures.window_perimeter_lf.toFixed(1)} LF)`);
+    }
+  }
 
   const warnings: Array<{ code: string; message: string }> = [];
   const lineItems: CombinedLineItem[] = [];
@@ -858,6 +881,7 @@ export async function calculateWithAutoScopeV2(
   // =========================================================================
   // BUILD MANUFACTURER GROUPS from material assignments
   // This aggregates SF/LF by manufacturer for per-manufacturer auto-scope rules
+  // V8.0: Also merges per_material_measurements from spatial containment
   // =========================================================================
   console.log('🏭 Building manufacturer groups from material assignments...');
 
@@ -870,12 +894,16 @@ export async function calculateWithAutoScopeV2(
       perimeter_lf: a.perimeter_lf ?? undefined,  // Convert null to undefined
       detection_id: a.detection_id,
     })),
-    organizationId
+    organizationId,
+    perMaterialMeasurements  // V8.0: Pass per-material measurements from spatial containment
   );
 
   console.log(`🏭 Built ${Object.keys(manufacturerGroups).length} manufacturer groups`);
   for (const [mfr, data] of Object.entries(manufacturerGroups)) {
-    console.log(`   ${mfr}: ${data.area_sqft.toFixed(0)} SF, ${data.linear_ft.toFixed(0)} LF`);
+    const openingsInfo = data.total_openings_perimeter_lf !== undefined
+      ? `, ${data.total_openings_perimeter_lf.toFixed(0)} LF openings (V8.0)`
+      : '';
+    console.log(`   ${mfr}: ${data.area_sqft.toFixed(0)} SF, ${data.linear_ft.toFixed(0)} LF${openingsInfo}`);
   }
 
   const autoScopeResult = await generateAutoScopeItemsV2(
@@ -885,6 +913,8 @@ export async function calculateWithAutoScopeV2(
     {
       skipSidingPanels: hasSidingAssignments,
       manufacturerGroups,  // Pass manufacturer groups for per-manufacturer rules
+      // V8.0: Pass spatial containment metadata for logging/diagnostics
+      spatialContainment: spatialContainment,
     }
   );
 

@@ -186,6 +186,15 @@ export interface AutoScopeV2Options {
   skipSidingPanels?: boolean;
   /** Manufacturer groups for per-manufacturer rule application */
   manufacturerGroups?: ManufacturerGroups;
+
+  // V8.0: Spatial Containment options
+  /** Spatial containment metadata from n8n workflow */
+  spatialContainment?: {
+    enabled: boolean;
+    matched_openings: number;
+    total_openings: number;
+    unmatched_openings?: number;
+  };
 }
 
 // ============================================================================
@@ -210,6 +219,28 @@ export interface ManufacturerMeasurements {
   piece_count: number;
   /** Detection IDs that contributed to this manufacturer's totals */
   detection_ids: string[];
+
+  // =========================================================================
+  // V8.0: Per-material opening measurements from spatial containment
+  // These are set when per_material_measurements is provided in the webhook
+  // =========================================================================
+
+  /** Window perimeter LF contained within this manufacturer's facades */
+  window_perimeter_lf?: number;
+  /** Door perimeter LF contained within this manufacturer's facades */
+  door_perimeter_lf?: number;
+  /** Garage perimeter LF contained within this manufacturer's facades */
+  garage_perimeter_lf?: number;
+  /** Count of windows contained within this manufacturer's facades */
+  window_count?: number;
+  /** Count of doors contained within this manufacturer's facades */
+  door_count?: number;
+  /** Count of garages contained within this manufacturer's facades */
+  garage_count?: number;
+  /** Total area of openings contained within this manufacturer's facades */
+  openings_area_sqft?: number;
+  /** Computed: total perimeter LF of all openings (window + door + garage) */
+  total_openings_perimeter_lf?: number;
 }
 
 /**
