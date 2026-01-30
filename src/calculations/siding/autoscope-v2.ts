@@ -493,22 +493,87 @@ export async function buildManufacturerGroups(
         (group.door_perimeter_lf || 0) +
         (group.garage_perimeter_lf || 0);
 
+      // =========================================================================
+      // V8.1: Merge perimeter, corners, trim, belly band, architectural
+      // =========================================================================
+
+      // V8.1: Perimeter (for starter strips, Z-flashing)
+      if (perMatMeasures.facade_perimeter_lf !== undefined) {
+        group.facade_perimeter_lf = (group.facade_perimeter_lf || 0) + perMatMeasures.facade_perimeter_lf;
+      }
+
+      // V8.1: Corners
+      if (perMatMeasures.outside_corner_count !== undefined) {
+        group.outside_corner_count = (group.outside_corner_count || 0) + perMatMeasures.outside_corner_count;
+      }
+      if (perMatMeasures.outside_corner_lf !== undefined) {
+        group.outside_corner_lf = (group.outside_corner_lf || 0) + perMatMeasures.outside_corner_lf;
+      }
+      if (perMatMeasures.inside_corner_count !== undefined) {
+        group.inside_corner_count = (group.inside_corner_count || 0) + perMatMeasures.inside_corner_count;
+      }
+      if (perMatMeasures.inside_corner_lf !== undefined) {
+        group.inside_corner_lf = (group.inside_corner_lf || 0) + perMatMeasures.inside_corner_lf;
+      }
+      // Compute total corner LF
+      group.total_corner_lf = (group.outside_corner_lf || 0) + (group.inside_corner_lf || 0);
+
+      // V8.1: Trim
+      if (perMatMeasures.trim_head_lf !== undefined) {
+        group.trim_head_lf = (group.trim_head_lf || 0) + perMatMeasures.trim_head_lf;
+      }
+      if (perMatMeasures.trim_jamb_lf !== undefined) {
+        group.trim_jamb_lf = (group.trim_jamb_lf || 0) + perMatMeasures.trim_jamb_lf;
+      }
+      if (perMatMeasures.trim_sill_lf !== undefined) {
+        group.trim_sill_lf = (group.trim_sill_lf || 0) + perMatMeasures.trim_sill_lf;
+      }
+      if (perMatMeasures.trim_total_lf !== undefined) {
+        group.trim_total_lf = (group.trim_total_lf || 0) + perMatMeasures.trim_total_lf;
+      } else {
+        // Compute total trim LF if not provided
+        group.trim_total_lf = (group.trim_head_lf || 0) + (group.trim_jamb_lf || 0) + (group.trim_sill_lf || 0);
+      }
+
+      // V8.1: Belly band
+      if (perMatMeasures.belly_band_lf !== undefined) {
+        group.belly_band_lf = (group.belly_band_lf || 0) + perMatMeasures.belly_band_lf;
+      }
+
+      // V8.1: Architectural elements
+      if (perMatMeasures.architectural_count !== undefined) {
+        group.architectural_count = (group.architectural_count || 0) + perMatMeasures.architectural_count;
+      }
+
       console.log(`[AutoScope V8.0] ${manufacturer}: ${group.window_count} windows (${group.window_perimeter_lf?.toFixed(1)} LF), ${group.door_count} doors (${group.door_perimeter_lf?.toFixed(1)} LF), ${group.garage_count} garages (${group.garage_perimeter_lf?.toFixed(1)} LF)`);
     }
 
-    // Log spatial containment summary
-    console.log(`[AutoScope V8.0] ═══════════════════════════════════════════`);
-    console.log(`[AutoScope V8.0] SPATIAL CONTAINMENT SUMMARY:`);
+    // Log spatial containment summary (V8.0 + V8.1)
+    console.log(`[AutoScope V8.1] ═══════════════════════════════════════════`);
+    console.log(`[AutoScope V8.1] SPATIAL CONTAINMENT SUMMARY:`);
     for (const [mfr, group] of Object.entries(groups)) {
       const openingLF = group.total_openings_perimeter_lf || 0;
       const windowCount = group.window_count || 0;
       const doorCount = group.door_count || 0;
       const garageCount = group.garage_count || 0;
-      console.log(`[AutoScope V8.0]   ${mfr}:`);
-      console.log(`[AutoScope V8.0]     Facade: ${group.area_sqft.toFixed(1)} SF`);
-      console.log(`[AutoScope V8.0]     Openings: ${windowCount} windows + ${doorCount} doors + ${garageCount} garages = ${openingLF.toFixed(1)} LF`);
+      console.log(`[AutoScope V8.1]   ${mfr}:`);
+      console.log(`[AutoScope V8.1]     Facade: ${group.area_sqft.toFixed(1)} SF, Perimeter: ${(group.facade_perimeter_lf || 0).toFixed(1)} LF`);
+      console.log(`[AutoScope V8.1]     Openings: ${windowCount} windows + ${doorCount} doors + ${garageCount} garages = ${openingLF.toFixed(1)} LF`);
+      // V8.1 fields
+      if (group.total_corner_lf !== undefined || group.outside_corner_count !== undefined) {
+        console.log(`[AutoScope V8.1]     Corners: ${group.outside_corner_count || 0} outside (${(group.outside_corner_lf || 0).toFixed(1)} LF) + ${group.inside_corner_count || 0} inside (${(group.inside_corner_lf || 0).toFixed(1)} LF) = ${(group.total_corner_lf || 0).toFixed(1)} LF`);
+      }
+      if (group.trim_total_lf !== undefined) {
+        console.log(`[AutoScope V8.1]     Trim: head=${(group.trim_head_lf || 0).toFixed(1)} + jamb=${(group.trim_jamb_lf || 0).toFixed(1)} + sill=${(group.trim_sill_lf || 0).toFixed(1)} = ${(group.trim_total_lf || 0).toFixed(1)} LF`);
+      }
+      if (group.belly_band_lf !== undefined) {
+        console.log(`[AutoScope V8.1]     Belly Band: ${group.belly_band_lf.toFixed(1)} LF`);
+      }
+      if (group.architectural_count !== undefined) {
+        console.log(`[AutoScope V8.1]     Architectural: ${group.architectural_count} EA`);
+      }
     }
-    console.log(`[AutoScope V8.0] ═══════════════════════════════════════════`);
+    console.log(`[AutoScope V8.1] ═══════════════════════════════════════════`);
   }
 
   // Log results
@@ -521,6 +586,13 @@ export async function buildManufacturerGroups(
     console.log(`    - Detections: ${data.detection_ids.length}`);
     if (data.total_openings_perimeter_lf !== undefined) {
       console.log(`    - Openings Perimeter: ${data.total_openings_perimeter_lf.toFixed(2)} LF (V8.0 spatial)`);
+    }
+    // V8.1 fields summary
+    if (data.total_corner_lf !== undefined) {
+      console.log(`    - Corners: ${data.total_corner_lf.toFixed(2)} LF (V8.1 spatial)`);
+    }
+    if (data.trim_total_lf !== undefined) {
+      console.log(`    - Trim: ${data.trim_total_lf.toFixed(2)} LF (V8.1 spatial)`);
     }
   }
 
@@ -535,6 +607,10 @@ export async function buildManufacturerGroups(
  * V8.0: If per-material opening measurements are available (from spatial containment),
  * use them instead of scaling from total project measurements. This enables accurate
  * per-manufacturer calculations for accessories like J-channel and caulk.
+ *
+ * V8.1: Added support for per-material perimeter, corners, trim, and belly band.
+ * These enable manufacturer-specific calculations for corner posts, trim boards,
+ * starter strips, and belly band accessories.
  */
 export function buildManufacturerContext(
   baseContext: MeasurementContext,
@@ -645,6 +721,81 @@ export function buildManufacturerContext(
     console.log(`[AutoScope V8.0] ${manufacturerData.manufacturer} context using spatial containment:`);
     console.log(`[AutoScope V8.0]   openings_perimeter_lf = ${mfrContext.openings_perimeter_lf.toFixed(1)}`);
     console.log(`[AutoScope V8.0]   openings_count = ${mfrContext.openings_count}`);
+  }
+
+  // =========================================================================
+  // V8.1: SPATIAL CONTAINMENT - Use per-material perimeter, corners, trim, belly band
+  // =========================================================================
+
+  const hasV81Data = manufacturerData.facade_perimeter_lf !== undefined ||
+                     manufacturerData.outside_corner_lf !== undefined ||
+                     manufacturerData.trim_total_lf !== undefined ||
+                     manufacturerData.belly_band_lf !== undefined;
+
+  if (hasV81Data) {
+    // V8.1: Perimeter (for starter strips, Z-flashing)
+    if (manufacturerData.facade_perimeter_lf !== undefined) {
+      mfrContext.facade_perimeter_lf = manufacturerData.facade_perimeter_lf;
+      // Also update level_starter_lf to match facade perimeter
+      mfrContext.level_starter_lf = manufacturerData.facade_perimeter_lf;
+    }
+
+    // V8.1: Corners
+    if (manufacturerData.outside_corner_count !== undefined) {
+      mfrContext.outside_corner_count = manufacturerData.outside_corner_count;
+      mfrContext.outside_corners_count = manufacturerData.outside_corner_count; // alias
+    }
+    if (manufacturerData.outside_corner_lf !== undefined) {
+      mfrContext.outside_corner_lf = manufacturerData.outside_corner_lf;
+    }
+    if (manufacturerData.inside_corner_count !== undefined) {
+      mfrContext.inside_corner_count = manufacturerData.inside_corner_count;
+      mfrContext.inside_corners_count = manufacturerData.inside_corner_count; // alias
+    }
+    if (manufacturerData.inside_corner_lf !== undefined) {
+      mfrContext.inside_corner_lf = manufacturerData.inside_corner_lf;
+    }
+    // Compute total corner LF
+    if (manufacturerData.total_corner_lf !== undefined) {
+      mfrContext.total_corner_lf = manufacturerData.total_corner_lf;
+    } else if (manufacturerData.outside_corner_lf !== undefined || manufacturerData.inside_corner_lf !== undefined) {
+      mfrContext.total_corner_lf = (manufacturerData.outside_corner_lf || 0) + (manufacturerData.inside_corner_lf || 0);
+    }
+
+    // V8.1: Trim
+    if (manufacturerData.trim_head_lf !== undefined) {
+      mfrContext.trim_head_lf = manufacturerData.trim_head_lf;
+    }
+    if (manufacturerData.trim_jamb_lf !== undefined) {
+      mfrContext.trim_jamb_lf = manufacturerData.trim_jamb_lf;
+    }
+    if (manufacturerData.trim_sill_lf !== undefined) {
+      mfrContext.trim_sill_lf = manufacturerData.trim_sill_lf;
+    }
+    if (manufacturerData.trim_total_lf !== undefined) {
+      mfrContext.trim_total_lf = manufacturerData.trim_total_lf;
+    } else if (manufacturerData.trim_head_lf !== undefined || manufacturerData.trim_jamb_lf !== undefined || manufacturerData.trim_sill_lf !== undefined) {
+      mfrContext.trim_total_lf = (manufacturerData.trim_head_lf || 0) + (manufacturerData.trim_jamb_lf || 0) + (manufacturerData.trim_sill_lf || 0);
+    }
+
+    // V8.1: Belly band
+    if (manufacturerData.belly_band_lf !== undefined) {
+      mfrContext.belly_band_lf = manufacturerData.belly_band_lf;
+    }
+
+    console.log(`[AutoScope V8.1] ${manufacturerData.manufacturer} context using spatial containment V8.1:`);
+    if (manufacturerData.facade_perimeter_lf !== undefined) {
+      console.log(`[AutoScope V8.1]   facade_perimeter_lf = ${mfrContext.facade_perimeter_lf.toFixed(1)}`);
+    }
+    if (mfrContext.total_corner_lf !== undefined) {
+      console.log(`[AutoScope V8.1]   total_corner_lf = ${mfrContext.total_corner_lf.toFixed(1)} (${mfrContext.outside_corner_count || 0} outside + ${mfrContext.inside_corner_count || 0} inside)`);
+    }
+    if (mfrContext.trim_total_lf !== undefined) {
+      console.log(`[AutoScope V8.1]   trim_total_lf = ${mfrContext.trim_total_lf.toFixed(1)}`);
+    }
+    if (mfrContext.belly_band_lf !== undefined) {
+      console.log(`[AutoScope V8.1]   belly_band_lf = ${mfrContext.belly_band_lf.toFixed(1)}`);
+    }
   }
 
   return mfrContext;

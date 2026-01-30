@@ -156,13 +156,16 @@ export interface WebhookRequest {
 }
 
 // ============================================================================
-// V8.0: PER-MATERIAL MEASUREMENTS (Spatial Containment)
+// V8.0/V8.1: PER-MATERIAL MEASUREMENTS (Spatial Containment)
 // ============================================================================
 
 /**
  * Per-material measurement data from spatial containment analysis
  * Each entry represents the openings (windows, doors, garages) that are
  * geometrically contained within a specific material's facade areas.
+ *
+ * V8.0: Added opening measurements (windows, doors, garages)
+ * V8.1: Added perimeter, corners, trim, belly band, and architectural
  */
 export interface PerMaterialMeasurement {
   /** Pricing item ID (UUID) of the material */
@@ -171,8 +174,22 @@ export interface PerMaterialMeasurement {
   material_sku: string | null;
   /** Manufacturer name from pricing_items table */
   manufacturer: string;
+
+  // =========================================================================
+  // Area (V8.0)
+  // =========================================================================
   /** Total facade area covered by this material */
   facade_sqft: number;
+
+  // =========================================================================
+  // V8.1: Perimeter (for starter strips, Z-flashing)
+  // =========================================================================
+  /** Perimeter of facades covered by this material (for starter strips) */
+  facade_perimeter_lf?: number;
+
+  // =========================================================================
+  // Openings (V8.0)
+  // =========================================================================
   /** Window perimeter contained within this material's facades */
   window_perimeter_lf: number;
   /** Door perimeter contained within this material's facades */
@@ -187,8 +204,50 @@ export interface PerMaterialMeasurement {
   garage_count: number;
   /** Total area of openings contained within this material's facades */
   openings_area_sqft: number;
-  /** Detection IDs of facades using this material (for provenance) */
+
+  // =========================================================================
+  // V8.1: Corners
+  // =========================================================================
+  /** Count of outside corners in this material's facades */
+  outside_corner_count?: number;
+  /** Total linear feet of outside corners */
+  outside_corner_lf?: number;
+  /** Count of inside corners in this material's facades */
+  inside_corner_count?: number;
+  /** Total linear feet of inside corners */
+  inside_corner_lf?: number;
+
+  // =========================================================================
+  // V8.1: Trim
+  // =========================================================================
+  /** Head trim linear feet (tops of windows/doors) */
+  trim_head_lf?: number;
+  /** Jamb trim linear feet (sides of windows/doors) */
+  trim_jamb_lf?: number;
+  /** Sill trim linear feet (bottoms of windows) */
+  trim_sill_lf?: number;
+  /** Total trim linear feet */
+  trim_total_lf?: number;
+
+  // =========================================================================
+  // V8.1: Other Measurements
+  // =========================================================================
+  /** Belly band linear feet within this material's facades */
+  belly_band_lf?: number;
+  /** Count of architectural elements (corbels, brackets, etc.) */
+  architectural_count?: number;
+
+  // =========================================================================
+  // Provenance (for traceability)
+  // =========================================================================
+  /** Detection IDs of facades using this material */
   facades: string[];
+  /** Detection IDs of openings contained (V8.1) */
+  openings?: string[];
+  /** Detection IDs of corners contained (V8.1) */
+  corners?: string[];
+  /** Detection IDs of trim segments contained (V8.1) */
+  trim_segments?: string[];
 }
 
 /**

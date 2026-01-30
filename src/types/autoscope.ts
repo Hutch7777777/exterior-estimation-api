@@ -207,6 +207,9 @@ export interface AutoScopeV2Options {
  *
  * Example: If a project has 800 SF of James Hardie and 400 SF of Nichiha,
  * there will be two ManufacturerMeasurements entries.
+ *
+ * V8.0: Added opening measurements (windows, doors, garages)
+ * V8.1: Added perimeter, corners, trim, belly band, and architectural
  */
 export interface ManufacturerMeasurements {
   /** Manufacturer name (e.g., "James Hardie", "Nichiha") */
@@ -241,6 +244,50 @@ export interface ManufacturerMeasurements {
   openings_area_sqft?: number;
   /** Computed: total perimeter LF of all openings (window + door + garage) */
   total_openings_perimeter_lf?: number;
+
+  // =========================================================================
+  // V8.1: Perimeter (for starter strips, Z-flashing)
+  // =========================================================================
+
+  /** Perimeter of facades covered by this manufacturer (for starter strips) */
+  facade_perimeter_lf?: number;
+
+  // =========================================================================
+  // V8.1: Corners
+  // =========================================================================
+
+  /** Count of outside corners in this manufacturer's facades */
+  outside_corner_count?: number;
+  /** Total linear feet of outside corners */
+  outside_corner_lf?: number;
+  /** Count of inside corners in this manufacturer's facades */
+  inside_corner_count?: number;
+  /** Total linear feet of inside corners */
+  inside_corner_lf?: number;
+  /** Total corner linear feet (outside + inside) */
+  total_corner_lf?: number;
+
+  // =========================================================================
+  // V8.1: Trim
+  // =========================================================================
+
+  /** Head trim linear feet (tops of windows/doors) */
+  trim_head_lf?: number;
+  /** Jamb trim linear feet (sides of windows/doors) */
+  trim_jamb_lf?: number;
+  /** Sill trim linear feet (bottoms of windows) */
+  trim_sill_lf?: number;
+  /** Total trim linear feet */
+  trim_total_lf?: number;
+
+  // =========================================================================
+  // V8.1: Other Measurements
+  // =========================================================================
+
+  /** Belly band linear feet within this manufacturer's facades */
+  belly_band_lf?: number;
+  /** Count of architectural elements (corbels, brackets, etc.) */
+  architectural_count?: number;
 }
 
 /**
