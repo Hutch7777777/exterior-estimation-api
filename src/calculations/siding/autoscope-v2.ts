@@ -337,7 +337,8 @@ export function buildMeasurementContext(
  * Material assignment structure for manufacturer grouping
  */
 export interface MaterialAssignmentForGrouping {
-  pricing_item_id: string;
+  pricing_item_id?: string;
+  assigned_material_id?: string;  // n8n workflow uses this field name
   quantity: number;
   unit: string;
   area_sqft?: number;
@@ -364,11 +365,11 @@ export async function buildManufacturerGroups(
     return groups;
   }
 
-  // Get unique pricing item IDs
+  // Get unique pricing item IDs (accept both field names)
   const pricingItemIds = [...new Set(
     materialAssignments
-      .map(a => a.pricing_item_id)
-      .filter(id => id && id.trim() !== '')
+      .map(a => a.pricing_item_id || a.assigned_material_id)
+      .filter((id): id is string => Boolean(id && id.trim() !== ''))
   )];
 
   if (pricingItemIds.length === 0) {
@@ -383,10 +384,11 @@ export async function buildManufacturerGroups(
 
   // Group assignments by manufacturer
   for (const assignment of materialAssignments) {
-    const pricing = pricingMap.get(assignment.pricing_item_id);
+    const itemId = assignment.pricing_item_id || assignment.assigned_material_id;
+    const pricing = itemId ? pricingMap.get(itemId) : undefined;
 
     if (!pricing) {
-      console.warn(`[AutoScope] No pricing found for ID: ${assignment.pricing_item_id}`);
+      console.warn(`[AutoScope] No pricing found for ID: ${itemId}`);
       continue;
     }
 
