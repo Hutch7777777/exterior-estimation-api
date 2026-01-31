@@ -28,6 +28,8 @@ export interface PricingItem {
   pieces_per_square?: number;
   coverage_value?: number;
   coverage_unit?: string;
+  // Labor classification - matches rate_name in labor_rates table
+  labor_class?: string;
 }
 
 interface PricingOverride {

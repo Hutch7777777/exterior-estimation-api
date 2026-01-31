@@ -145,6 +145,8 @@ export interface CombinedLineItem {
 
   // Labor calculation
   squares_for_labor?: number;
+  labor_class?: string;  // Links to labor_rates.rate_name (e.g., "Lap Siding Installation")
+  is_colorplus?: boolean;  // Flag for ColorPlus premium labor
 
   // Metadata
   calculation_source: 'assigned_material' | 'auto-scope';
@@ -203,8 +205,12 @@ export interface V2CalculationResult {
 
 /**
  * Calculate installation labor using labor_auto_scope_rules
+ * Groups materials by labor_class for separate labor line items per siding type.
+ * Also adds ColorPlus premium labor for ColorPlus materials.
+ *
  * Dynamically generates labor items based on:
- * - Material categories in the takeoff
+ * - labor_class from pricing_items (e.g., "Lap Siding Installation", "Panel Siding Installation")
+ * - ColorPlus premium (additional labor for ColorPlus products)
  * - Detection counts for specialty items
  * - Facade area for universal items (WRB, demo)
  */
@@ -212,7 +218,8 @@ function calculateInstallationLaborFromRules(
   materials: CombinedLineItem[],
   laborAutoScopeRules: LaborAutoScopeRule[],
   detectionCounts: Record<string, { count: number; total_lf?: number; total_sf?: number }> | undefined,
-  facadeAreaSqft: number
+  facadeAreaSqft: number,
+  laborRates: LaborRate[] = []
 ): { laborItems: LaborLineItem[], subtotal: number } {
 
   console.log('👷 Calculating installation labor from auto-scope rules...');
@@ -221,22 +228,60 @@ function calculateInstallationLaborFromRules(
 
   const laborItems: LaborLineItem[] = [];
 
-  // Group materials by category for rule evaluation
+  // =========================================================================
+  // STEP 1: Group materials by labor_class for installation labor
+  // This creates separate labor lines for lap siding, panel siding, etc.
+  // =========================================================================
+  interface LaborClassAccumulator {
+    squares: number;       // Total squares for labor
+    sqft: number;          // Total square feet
+    count: number;         // Count of items
+    lf: number;            // Linear feet
+    colorplusSquares: number;  // Squares of ColorPlus materials
+  }
+
+  const materialsByLaborClass: Record<string, LaborClassAccumulator> = {};
+
+  // Also track by category for legacy rule support
   const materialsByCategory: Record<string, { sqft: number; count: number; lf: number }> = {};
 
   for (const item of materials) {
+    // Group by labor_class (new approach)
+    const laborClass = item.labor_class || 'Lap Siding Installation';  // Default to lap siding
+    if (!materialsByLaborClass[laborClass]) {
+      materialsByLaborClass[laborClass] = { squares: 0, sqft: 0, count: 0, lf: 0, colorplusSquares: 0 };
+    }
+
+    // Accumulate squares for labor from the item
+    if (item.squares_for_labor) {
+      materialsByLaborClass[laborClass].squares += item.squares_for_labor;
+
+      // Track ColorPlus separately
+      if (item.is_colorplus) {
+        materialsByLaborClass[laborClass].colorplusSquares += item.squares_for_labor;
+      }
+    }
+
+    // Also accumulate by unit for other calculations
+    if (item.unit === 'SF' || item.unit === 'sf') {
+      materialsByLaborClass[laborClass].sqft += item.quantity;
+    } else if (item.unit === 'LF' || item.unit === 'lf') {
+      materialsByLaborClass[laborClass].lf += item.quantity;
+    } else {
+      materialsByLaborClass[laborClass].count += item.quantity;
+    }
+
+    // Legacy: also group by category for rule evaluation
     const category = (item.category || 'other').toLowerCase();
     if (!materialsByCategory[category]) {
       materialsByCategory[category] = { sqft: 0, count: 0, lf: 0 };
     }
 
-    // Accumulate based on unit
     if (item.unit === 'SF' || item.unit === 'sf') {
       materialsByCategory[category].sqft += item.quantity;
     } else if (item.unit === 'LF' || item.unit === 'lf') {
       materialsByCategory[category].lf += item.quantity;
     } else {
-      // For EA/piece count, estimate sqft from squares_for_labor or count
       if (item.squares_for_labor) {
         materialsByCategory[category].sqft += item.squares_for_labor * 100;
       }
@@ -244,9 +289,86 @@ function calculateInstallationLaborFromRules(
     }
   }
 
+  console.log('   Labor classes found:', Object.keys(materialsByLaborClass).join(', '));
   console.log('   Material categories found:', Object.keys(materialsByCategory).join(', '));
 
-  // Evaluate each rule in priority order
+  // =========================================================================
+  // STEP 2: Generate labor items by labor_class
+  // Creates separate lines like "Install fiber cement lap siding" and "Install panel siding"
+  // =========================================================================
+  for (const [laborClassName, data] of Object.entries(materialsByLaborClass)) {
+    if (data.squares <= 0) continue;
+
+    // Find the matching labor rate by rate_name
+    const matchingRate = laborRates.find(r =>
+      r.rate_name.toLowerCase() === laborClassName.toLowerCase()
+    );
+
+    if (matchingRate) {
+      const unitCost = parseFloat(matchingRate.base_rate) || 0;
+      const multiplier = parseFloat(matchingRate.difficulty_multiplier) || 1.0;
+      const minCharge = parseFloat(matchingRate.min_charge || '0');
+
+      const baseCost = data.squares * unitCost * multiplier;
+      const totalCost = Math.max(baseCost, minCharge);
+
+      console.log(`   ✅ ${laborClassName}: ${data.squares.toFixed(2)} SQ × $${unitCost}/SQ = $${totalCost.toFixed(2)}`);
+
+      laborItems.push({
+        rate_id: matchingRate.id,
+        rate_name: matchingRate.rate_name,
+        description: matchingRate.description,
+        quantity: Math.round(data.squares * 100) / 100,
+        unit: matchingRate.unit || 'SQ',
+        unit_cost: unitCost,
+        total_cost: Math.round(totalCost * 100) / 100,
+        notes: `Grouped by labor_class from pricing_items`
+      });
+
+      // =========================================================================
+      // STEP 3: Add ColorPlus Premium if applicable
+      // This is an ADDITIONAL line for the extra labor on ColorPlus materials
+      // =========================================================================
+      if (data.colorplusSquares > 0) {
+        const colorplusPremiumRate = laborRates.find(r =>
+          r.rate_name.toLowerCase().includes('colorplus') ||
+          r.rate_name.toLowerCase().includes('color plus') ||
+          r.rate_name.toLowerCase().includes('premium')
+        );
+
+        if (colorplusPremiumRate) {
+          const premiumUnitCost = parseFloat(colorplusPremiumRate.base_rate) || 0;
+          const premiumMultiplier = parseFloat(colorplusPremiumRate.difficulty_multiplier) || 1.0;
+          const premiumMinCharge = parseFloat(colorplusPremiumRate.min_charge || '0');
+
+          const premiumBaseCost = data.colorplusSquares * premiumUnitCost * premiumMultiplier;
+          const premiumTotalCost = Math.max(premiumBaseCost, premiumMinCharge);
+
+          console.log(`   ✅ ColorPlus Premium (${laborClassName}): ${data.colorplusSquares.toFixed(2)} SQ × $${premiumUnitCost}/SQ = $${premiumTotalCost.toFixed(2)}`);
+
+          laborItems.push({
+            rate_id: colorplusPremiumRate.id,
+            rate_name: colorplusPremiumRate.rate_name,
+            description: `ColorPlus premium labor for ${laborClassName}`,
+            quantity: Math.round(data.colorplusSquares * 100) / 100,
+            unit: colorplusPremiumRate.unit || 'SQ',
+            unit_cost: premiumUnitCost,
+            total_cost: Math.round(premiumTotalCost * 100) / 100,
+            notes: `ColorPlus premium for ${laborClassName}`
+          });
+        } else {
+          console.log(`   ⚠️ No ColorPlus premium rate found for ${data.colorplusSquares.toFixed(2)} SQ of ColorPlus material`);
+        }
+      }
+    } else {
+      console.log(`   ⚠️ No labor rate found for labor_class: ${laborClassName}`);
+    }
+  }
+
+  // =========================================================================
+  // STEP 4: Evaluate auto-scope rules for non-siding labor (WRB, demo, specialty items)
+  // These rules handle things like facade-based items and detection-based items
+  // =========================================================================
   for (const rule of laborAutoScopeRules) {
     let quantity = 0;
     let shouldApply = false;
@@ -255,6 +377,18 @@ function calculateInstallationLaborFromRules(
     if (!rate) {
       console.log(`   ⚠️ Rule ${rule.rule_id} has no linked labor rate - skipping`);
       continue;
+    }
+
+    // Skip material_category rules for siding - we handle those via labor_class above
+    if (rule.trigger_type === 'material_category') {
+      const categories = (rule.trigger_value || '').split(',').map(c => c.trim().toLowerCase());
+      const isSidingCategory = categories.some(c =>
+        c.includes('siding') || c === 'lap_siding' || c === 'panel_siding' || c === 'shingle_siding'
+      );
+      if (isSidingCategory) {
+        console.log(`   ⏭️ Skipping rule ${rule.rule_id} (siding category handled by labor_class)`);
+        continue;
+      }
     }
 
     // Evaluate trigger condition
@@ -266,7 +400,7 @@ function calculateInstallationLaborFromRules(
       }
 
     } else if (rule.trigger_type === 'material_category') {
-      // Check if any of the trigger categories have materials
+      // Check if any of the trigger categories have materials (non-siding items)
       const categories = (rule.trigger_value || '').split(',').map(c => c.trim().toLowerCase());
 
       for (const cat of categories) {
@@ -817,6 +951,10 @@ export async function calculateWithAutoScopeV2(
       const presentationGroup = getPresentationGroup(pricing.category);
       const itemOrder = getItemOrder(presentationGroup, pricing.category);
 
+      // Determine if this is a ColorPlus product (check product name for "ColorPlus")
+      const isColorPlus = pricing.product_name?.toLowerCase().includes('colorplus') ||
+                          pricing.product_name?.toLowerCase().includes('color plus');
+
       lineItems.push({
         description: pricing.product_name,
         sku: pricing.sku,
@@ -833,6 +971,8 @@ export async function calculateWithAutoScopeV2(
         total_extended: materialExtended,  // Material only - labor separate
 
         squares_for_labor: squaresForLabor,
+        labor_class: pricing.labor_class,  // Links to labor_rates.rate_name
+        is_colorplus: isColorPlus,  // Flag for ColorPlus premium labor
 
         calculation_source: 'assigned_material',
         pricing_item_id: assignment.pricing_item_id,
@@ -1674,12 +1814,13 @@ export async function calculateWithAutoScopeV2(
   let laborSubtotal: number;
 
   if (laborAutoScopeRules.length > 0) {
-    // Use new rules-based labor calculation
+    // Use new rules-based labor calculation with labor_class grouping
     const laborResult = calculateInstallationLaborFromRules(
       lineItems,
       laborAutoScopeRules,
       detectionCounts,
-      facadeAreaSqft
+      facadeAreaSqft,
+      laborRates  // Pass laborRates for labor_class-based grouping
     );
     laborItems = laborResult.laborItems;
     laborSubtotal = laborResult.subtotal;
