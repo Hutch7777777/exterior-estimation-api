@@ -1903,7 +1903,14 @@ export async function calculateWithAutoScopeV2(
   let laborItems: LaborLineItem[];
   let laborSubtotal: number;
 
+  console.log(`\n👷 LABOR CALCULATION START`);
+  console.log(`   laborAutoScopeRules.length: ${laborAutoScopeRules.length}`);
+  console.log(`   facadeAreaSqft: ${facadeAreaSqft}`);
+  console.log(`   lineItems.length: ${lineItems.length}`);
+  console.log(`   laborRates.length: ${laborRates.length}`);
+
   if (laborAutoScopeRules.length > 0) {
+    console.log(`   → Using rules-based labor calculation`);
     // Use new rules-based labor calculation with labor_class grouping
     const laborResult = calculateInstallationLaborFromRules(
       lineItems,
