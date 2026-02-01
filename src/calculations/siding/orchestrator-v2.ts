@@ -1870,7 +1870,7 @@ export async function calculateWithAutoScopeV2(
     laborSubtotal = laborResult.subtotal;
   }
 
-  // Calculate overhead costs
+  // Calculate overhead costs (without project insurance - that's added after markup calculation)
   const { overheadItems, subtotal: overheadSubtotal } = calculateOverhead(
     sidingOverheadCosts,
     laborSubtotal
@@ -1882,6 +1882,31 @@ export async function calculateWithAutoScopeV2(
     laborSubtotal,
     overheadSubtotal
   );
+
+  // =========================================================================
+  // ADD PROJECT INSURANCE AS OVERHEAD LINE ITEM
+  // Project insurance is calculated on the marked-up subtotal, so it must be
+  // added after calculateProjectTotals. This ensures it appears in the
+  // takeoff_line_items and Excel export.
+  // =========================================================================
+  if (projectTotals.project_insurance > 0) {
+    overheadItems.push({
+      cost_id: 'PROJECT-INSURANCE',
+      cost_name: 'Project Insurance',
+      description: 'General liability and workers comp insurance for project',
+      category: 'insurance',
+      quantity: 1,
+      unit: 'project',
+      rate: projectTotals.project_insurance,
+      amount: projectTotals.project_insurance,
+      calculation_type: 'calculated',
+      notes: `$${INSURANCE_RATE_PER_THOUSAND.toFixed(2)} per $1,000 of project subtotal ($${projectTotals.subtotal.toFixed(2)})`
+    });
+    console.log(`   📊 Project Insurance: $${projectTotals.project_insurance.toFixed(2)} (added to overhead items)`);
+  }
+
+  // Update overhead subtotal to include project insurance
+  const overheadTotalWithInsurance = overheadSubtotal + projectTotals.project_insurance;
 
   // =========================================================================
   // PART 4: Build Result
@@ -1899,7 +1924,7 @@ export async function calculateWithAutoScopeV2(
     },
     overhead: {
       items: overheadItems,
-      subtotal: overheadSubtotal,
+      subtotal: overheadTotalWithInsurance,  // Includes project insurance
     },
     totals: {
       material_cost: projectTotals.material_cost,
