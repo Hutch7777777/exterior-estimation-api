@@ -883,11 +883,52 @@ export async function calculateWithAutoScopeV2(
   });
 
   if (materialAssignments && materialAssignments.length > 0) {
+    // =========================================================================
+    // CLASS-BASED FILTERING - Prevent double-counting overlapping polygons
+    // When users draw 'siding' polygons INSIDE 'exterior wall' polygons, both
+    // get material assignments. We should only count the siding-specific ones.
+    // =========================================================================
+    const SIDING_SPECIFIC_CLASSES = ['siding', 'gable'];
+    const PARENT_CONTAINER_CLASSES = ['exterior wall', 'exterior_wall', 'building', 'facade', 'exterior_walls'];
+
+    // Check if siding-specific polygons exist
+    const hasSidingPolygons = materialAssignments.some(a => {
+      const cls = (a.detection_class || '').toLowerCase();
+      return SIDING_SPECIFIC_CLASSES.some(sc => cls.includes(sc));
+    });
+
+    // Filter assignments to prevent double-counting overlapping polygons
+    const filteredMaterialAssignments = materialAssignments.filter(a => {
+      const cls = (a.detection_class || '').toLowerCase();
+
+      // Always include siding-specific classes
+      if (SIDING_SPECIFIC_CLASSES.some(sc => cls.includes(sc))) {
+        return true;
+      }
+
+      // If siding polygons exist, exclude parent container classes (they overlap)
+      if (hasSidingPolygons && PARENT_CONTAINER_CLASSES.some(pc => cls.includes(pc))) {
+        console.log(`   ⏭️ [LineItems] Skipping '${a.detection_class}' - siding polygons exist (preventing overlap)`);
+        return false;
+      }
+
+      // Include everything else (windows, doors, trim, corners, etc.)
+      return true;
+    });
+
+    const removedCount = materialAssignments.length - filteredMaterialAssignments.length;
+    if (removedCount > 0) {
+      const removedArea = materialAssignments
+        .filter(a => !filteredMaterialAssignments.includes(a))
+        .reduce((sum, a) => sum + (a.quantity || 0), 0);
+      console.log(`🏭 [LineItems] Filtered ${materialAssignments.length} → ${filteredMaterialAssignments.length} (removed ${removedCount} overlapping, ${removedArea.toFixed(0)} SF not counted)`);
+    }
+
     // Batch fetch pricing for all assigned materials
-    const pricingIds = materialAssignments.map(m => m.pricing_item_id);
+    const pricingIds = filteredMaterialAssignments.map(m => m.pricing_item_id);
     const pricingMap = await getPricingByIds(pricingIds, organizationId);
 
-    for (const assignment of materialAssignments) {
+    for (const assignment of filteredMaterialAssignments) {
       const pricing = pricingMap.get(assignment.pricing_item_id);
 
       if (!pricing) {
