@@ -224,9 +224,14 @@ function calculateInstallationLaborFromRules(
   laborRates: LaborRate[] = []
 ): { laborItems: LaborLineItem[], subtotal: number } {
 
-  console.log('👷 Calculating installation labor from auto-scope rules...');
-  console.log(`   Facade area: ${facadeAreaSqft.toFixed(2)} SF (${(facadeAreaSqft / 100).toFixed(2)} SQ)`);
+  console.log('');
+  console.log('═══════════════════════════════════════════════════════════════════════');
+  console.log('👷 calculateInstallationLaborFromRules FUNCTION ENTERED');
+  console.log('═══════════════════════════════════════════════════════════════════════');
+  console.log(`   Facade area: ${facadeAreaSqft} SF (${(facadeAreaSqft / 100).toFixed(2)} SQ)`);
   console.log(`   Rules to evaluate: ${laborAutoScopeRules.length}`);
+  console.log(`   Materials: ${materials.length}`);
+  console.log(`   Labor rates: ${laborRates.length}`);
 
   const laborItems: LaborLineItem[] = [];
 
