@@ -382,44 +382,34 @@ export async function buildManufacturerGroups(
   }
 
   // =========================================================================
-  // CLASS-BASED FILTERING - Prevent double-counting overlapping polygons
-  // When users draw 'siding' polygons INSIDE 'exterior wall' polygons, both
-  // get material assignments. We should only count the siding-specific ones.
+  // CLASS-BASED FILTERING - WHITELIST APPROACH
+  // Only include explicit siding installation surface classes.
+  // Excludes: garage (opening), exterior wall (container), building, facade, etc.
   // =========================================================================
+  const SIDING_INSTALLATION_CLASSES = ['siding', 'gable'];
 
-  // Classes that represent actual siding installation areas
-  const SIDING_SPECIFIC_CLASSES = ['siding', 'gable'];
-  // Classes that are parent containers (should be excluded when siding polygons exist)
-  const PARENT_CONTAINER_CLASSES = ['exterior wall', 'exterior_wall', 'building', 'facade', 'exterior_walls'];
-
-  // Check if siding-specific polygons exist
-  const hasSidingPolygons = materialAssignments.some(a => {
-    const cls = (a.detection_class || '').toLowerCase();
-    return SIDING_SPECIFIC_CLASSES.some(sc => cls.includes(sc));
-  });
-
-  // Filter assignments to prevent double-counting
+  // Filter to ONLY include siding installation classes (whitelist approach)
   const filteredAssignments = materialAssignments.filter(a => {
     const cls = (a.detection_class || '').toLowerCase();
 
-    // Always include siding-specific classes
-    if (SIDING_SPECIFIC_CLASSES.some(sc => cls.includes(sc))) {
-      return true;
-    }
+    // Only include if class matches a siding installation class
+    const isSidingInstallation = SIDING_INSTALLATION_CLASSES.some(sc => cls.includes(sc));
 
-    // If siding polygons exist, exclude parent container classes (they overlap)
-    if (hasSidingPolygons && PARENT_CONTAINER_CLASSES.some(pc => cls.includes(pc))) {
-      console.log(`   ⏭️ Skipping '${a.detection_class}' class - siding polygons exist (preventing overlap double-count)`);
+    if (!isSidingInstallation) {
+      console.log(`   ⏭️ [AutoScope] Skipping '${a.detection_class}' (${a.quantity?.toFixed(1) || 0} ${a.unit}) - not a siding installation area`);
       return false;
     }
 
-    // Include everything else (windows, doors, trim, corners, etc.)
     return true;
   });
 
   const removedCount = materialAssignments.length - filteredAssignments.length;
   if (removedCount > 0) {
-    console.log(`🏭 Filtered ${materialAssignments.length} assignments → ${filteredAssignments.length} (removed ${removedCount} overlapping parent containers)`);
+    const removedArea = materialAssignments
+      .filter(a => !filteredAssignments.includes(a))
+      .filter(a => (a.unit || '').toUpperCase() === 'SF')
+      .reduce((sum, a) => sum + (a.quantity || 0), 0);
+    console.log(`🏭 [AutoScope] Filtered ${materialAssignments.length} → ${filteredAssignments.length} (removed ${removedCount} non-siding classes, ${removedArea.toFixed(0)} SF excluded)`);
   }
 
   // Debug: Log incoming assignments to verify field names
@@ -711,14 +701,16 @@ export async function buildManufacturerGroups(
   if (materialAssignments.length !== filteredAssignments.length) {
     const skippedAssignments = materialAssignments.filter(a => !filteredAssignments.includes(a));
     const skippedClasses = [...new Set(skippedAssignments.map(a => a.detection_class).filter(Boolean))];
-    const skippedArea = skippedAssignments.reduce((sum, a) => sum + (a.quantity || 0), 0);
+    const skippedArea = skippedAssignments
+      .filter(a => (a.unit || '').toUpperCase() === 'SF')
+      .reduce((sum, a) => sum + (a.quantity || 0), 0);
 
-    console.log(`\n🔍 CLASS FILTERING SUMMARY (Overlap Prevention):`);
+    console.log(`\n🔍 CLASS FILTERING SUMMARY (Whitelist: siding, gable only):`);
     console.log(`   Original assignments: ${materialAssignments.length}`);
     console.log(`   After filtering: ${filteredAssignments.length}`);
-    console.log(`   Removed (overlapping): ${materialAssignments.length - filteredAssignments.length}`);
+    console.log(`   Removed (non-siding classes): ${materialAssignments.length - filteredAssignments.length}`);
     console.log(`   Skipped classes: ${skippedClasses.join(', ')}`);
-    console.log(`   Area NOT counted (was overlapping): ${skippedArea.toFixed(2)} SF`);
+    console.log(`   SF excluded: ${skippedArea.toFixed(2)} SF`);
   }
 
   return groups;

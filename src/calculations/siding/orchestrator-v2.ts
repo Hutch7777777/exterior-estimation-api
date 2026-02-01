@@ -884,35 +884,24 @@ export async function calculateWithAutoScopeV2(
 
   if (materialAssignments && materialAssignments.length > 0) {
     // =========================================================================
-    // CLASS-BASED FILTERING - Prevent double-counting overlapping polygons
-    // When users draw 'siding' polygons INSIDE 'exterior wall' polygons, both
-    // get material assignments. We should only count the siding-specific ones.
+    // CLASS-BASED FILTERING - WHITELIST APPROACH
+    // Only include explicit siding installation surface classes.
+    // Excludes: garage (opening), exterior wall (container), building, facade, etc.
     // =========================================================================
-    const SIDING_SPECIFIC_CLASSES = ['siding', 'gable'];
-    const PARENT_CONTAINER_CLASSES = ['exterior wall', 'exterior_wall', 'building', 'facade', 'exterior_walls'];
+    const SIDING_INSTALLATION_CLASSES = ['siding', 'gable'];
 
-    // Check if siding-specific polygons exist
-    const hasSidingPolygons = materialAssignments.some(a => {
-      const cls = (a.detection_class || '').toLowerCase();
-      return SIDING_SPECIFIC_CLASSES.some(sc => cls.includes(sc));
-    });
-
-    // Filter assignments to prevent double-counting overlapping polygons
+    // Filter to ONLY include siding installation classes (whitelist approach)
     const filteredMaterialAssignments = materialAssignments.filter(a => {
       const cls = (a.detection_class || '').toLowerCase();
 
-      // Always include siding-specific classes
-      if (SIDING_SPECIFIC_CLASSES.some(sc => cls.includes(sc))) {
-        return true;
-      }
+      // Only include if class matches a siding installation class
+      const isSidingInstallation = SIDING_INSTALLATION_CLASSES.some(sc => cls.includes(sc));
 
-      // If siding polygons exist, exclude parent container classes (they overlap)
-      if (hasSidingPolygons && PARENT_CONTAINER_CLASSES.some(pc => cls.includes(pc))) {
-        console.log(`   ⏭️ [LineItems] Skipping '${a.detection_class}' - siding polygons exist (preventing overlap)`);
+      if (!isSidingInstallation) {
+        console.log(`   ⏭️ [LineItems] Skipping '${a.detection_class}' (${a.quantity?.toFixed(1) || 0} ${a.unit}) - not a siding installation area`);
         return false;
       }
 
-      // Include everything else (windows, doors, trim, corners, etc.)
       return true;
     });
 
@@ -920,8 +909,9 @@ export async function calculateWithAutoScopeV2(
     if (removedCount > 0) {
       const removedArea = materialAssignments
         .filter(a => !filteredMaterialAssignments.includes(a))
+        .filter(a => a.unit === 'SF')
         .reduce((sum, a) => sum + (a.quantity || 0), 0);
-      console.log(`🏭 [LineItems] Filtered ${materialAssignments.length} → ${filteredMaterialAssignments.length} (removed ${removedCount} overlapping, ${removedArea.toFixed(0)} SF not counted)`);
+      console.log(`🏭 [LineItems] Filtered ${materialAssignments.length} → ${filteredMaterialAssignments.length} (removed ${removedCount} non-siding classes, ${removedArea.toFixed(0)} SF excluded)`);
     }
 
     // Batch fetch pricing for all assigned materials
