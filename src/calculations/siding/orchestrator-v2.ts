@@ -107,6 +107,7 @@ interface ProjectTotals {
 
   installation_labor_subtotal: number;
   overhead_subtotal: number;
+  overhead_total: number;  // For display: overhead_subtotal + project_insurance
   labor_cost_before_markup: number;
   labor_markup_rate: number;
   labor_markup_amount: number;
@@ -664,6 +665,9 @@ function calculateProjectTotals(
   console.log(`   Project insurance: $${projectInsurance.toFixed(2)}`);
   console.log(`   Grand total: $${grandTotal.toFixed(2)}`);
 
+  // Calculate overhead_total for display (includes project insurance)
+  const overheadTotal = overheadSubtotal + projectInsurance;
+
   return {
     material_cost: Math.round(materialCost * 100) / 100,
     material_markup_rate: markupRate,
@@ -672,6 +676,7 @@ function calculateProjectTotals(
 
     installation_labor_subtotal: Math.round(installationLaborSubtotal * 100) / 100,
     overhead_subtotal: Math.round(overheadSubtotal * 100) / 100,
+    overhead_total: Math.round(overheadTotal * 100) / 100,  // For display: includes project insurance
     labor_cost_before_markup: Math.round(laborCostBeforeMarkup * 100) / 100,
     labor_markup_rate: markupRate,
     labor_markup_amount: Math.round(laborMarkupAmount * 100) / 100,
