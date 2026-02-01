@@ -371,7 +371,16 @@ function calculateInstallationLaborFromRules(
   // STEP 4: Evaluate auto-scope rules for non-siding labor (WRB, demo, specialty items)
   // These rules handle things like facade-based items and detection-based items
   // =========================================================================
+  console.log(`\n🔍 [LaborAutoScope] Evaluating ${laborAutoScopeRules.length} labor auto-scope rules...`);
+  console.log(`   facadeAreaSqft passed to function: ${facadeAreaSqft}`);
+
   for (const rule of laborAutoScopeRules) {
+    console.log(`\n   📋 Rule: ${rule.rule_id} (${rule.rule_name})`);
+    console.log(`      trigger_type: ${rule.trigger_type}`);
+    console.log(`      quantity_source: ${rule.quantity_source}`);
+    console.log(`      labor_rate_id: ${rule.labor_rate_id}`);
+    console.log(`      labor_rates joined: ${rule.labor_rates ? JSON.stringify(rule.labor_rates) : 'NULL'}`);
+
     let quantity = 0;
     let shouldApply = false;
     const rate = rule.labor_rates;
@@ -397,8 +406,13 @@ function calculateInstallationLaborFromRules(
     if (rule.trigger_type === 'always') {
       // Always apply (e.g., WRB, demo/cleanup)
       shouldApply = true;
+      console.log(`      ✓ trigger_type='always' - shouldApply=true`);
+
       if (rule.quantity_source === 'facade_sqft') {
         quantity = facadeAreaSqft / 100; // Convert to squares
+        console.log(`      ✓ quantity_source='facade_sqft' - quantity=${quantity.toFixed(2)} SQ (from ${facadeAreaSqft} SF)`);
+      } else {
+        console.log(`      ⚠️ quantity_source='${rule.quantity_source}' not handled for 'always' trigger`);
       }
 
     } else if (rule.trigger_type === 'material_category') {
@@ -446,6 +460,8 @@ function calculateInstallationLaborFromRules(
     }
 
     // Apply the rule if conditions met and quantity > 0
+    console.log(`      Final: shouldApply=${shouldApply}, quantity=${quantity}`);
+
     if (shouldApply && quantity > 0) {
       const unitCost = parseFloat(rate.base_rate) || 0;
       const multiplier = parseFloat(rate.difficulty_multiplier) || 1.0;
@@ -454,7 +470,7 @@ function calculateInstallationLaborFromRules(
       const baseCost = quantity * unitCost * multiplier;
       const totalCost = Math.max(baseCost, minCharge);
 
-      console.log(`   ✅ ${rule.rule_name}: ${quantity.toFixed(2)} ${rule.quantity_unit} × $${unitCost}/${rule.quantity_unit} = $${totalCost.toFixed(2)}`);
+      console.log(`   ✅ ADDING LABOR: ${rule.rule_name}: ${quantity.toFixed(2)} ${rule.quantity_unit} × $${unitCost}/${rule.quantity_unit} = $${totalCost.toFixed(2)}`);
 
       laborItems.push({
         rate_id: rate.id,
@@ -812,6 +828,11 @@ export async function calculateWithAutoScopeV2(
     } else {
       laborAutoScopeRules = (laborRulesData || []) as LaborAutoScopeRule[];
       console.log(`   Found ${laborAutoScopeRules.length} labor auto-scope rules`);
+      // Log details of each rule for debugging
+      for (const rule of laborAutoScopeRules) {
+        console.log(`   📋 Rule ${rule.rule_id}: ${rule.rule_name} (trigger=${rule.trigger_type}, source=${rule.quantity_source}, labor_rate_id=${rule.labor_rate_id})`);
+        console.log(`      labor_rates joined: ${rule.labor_rates ? `id=${rule.labor_rates.id}, rate=${rule.labor_rates.base_rate}` : 'NULL - JOIN FAILED!'}`);
+      }
     }
 
     // Fetch overhead costs
