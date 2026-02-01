@@ -181,11 +181,28 @@ export interface AutoScopeV2Result {
 // AUTO-SCOPE V2 OPTIONS
 // ============================================================================
 
+/**
+ * Material info for trigger condition evaluation
+ * Used for material_category and sku_pattern trigger conditions
+ */
+export interface AssignedMaterial {
+  /** SKU from pricing_items table (e.g., "JH-BBCP-16OC-CP-AW") */
+  sku: string;
+  /** Category from pricing_items table (e.g., "board_batten", "lap_siding") */
+  category: string;
+  /** Manufacturer name (e.g., "James Hardie") */
+  manufacturer: string;
+  /** Optional: pricing item ID for traceability */
+  pricing_item_id?: string;
+}
+
 export interface AutoScopeV2Options {
   /** Skip siding panel rules if user has siding material assignments */
   skipSidingPanels?: boolean;
   /** Manufacturer groups for per-manufacturer rule application */
   manufacturerGroups?: ManufacturerGroups;
+  /** Assigned materials for material_category/sku_pattern trigger conditions */
+  assignedMaterials?: AssignedMaterial[];
 
   // V8.0: Spatial Containment options
   /** Spatial containment metadata from n8n workflow */

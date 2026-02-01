@@ -19,7 +19,8 @@ import {
   AutoScopeV2Options,
   CadHoverMeasurements,
   ManufacturerGroups,
-  ManufacturerMeasurements
+  ManufacturerMeasurements,
+  AssignedMaterial
 } from '../../types/autoscope';
 import { PerMaterialMeasurements } from '../../types/webhook';
 // PricingItem type used indirectly via getPricingByIds return type
@@ -60,6 +61,9 @@ interface DbAutoScopeRule {
 // { "min_openings": 1 } - min openings count
 // { "min_net_area": 500 } - min net area sqft
 // { "trim_total_lf_gt": 0 } - trigger when trim_total_lf > 0
+// NEW: Material-based triggers for SKU pattern matching
+// { "material_category": "board_batten" } - only when assigned material has this category
+// { "sku_pattern": "16OC-CP" } - only when assigned material SKU contains this pattern
 interface DbTriggerCondition {
   always?: boolean;
   min_corners?: number;
@@ -76,7 +80,12 @@ interface DbTriggerCondition {
   trim_head_lf_gt?: number;    // Trigger when trim_head_lf > this value
   trim_jamb_lf_gt?: number;    // Trigger when trim_jamb_lf > this value
   trim_sill_lf_gt?: number;    // Trigger when trim_sill_lf > this value
+  // NEW: Material-based triggers (match against assigned materials)
+  material_category?: string;  // e.g., "board_batten" - matches pricing_items.category
+  sku_pattern?: string;        // e.g., "16OC-CP" - substring match against pricing_items.sku
 }
+
+// NOTE: AssignedMaterial interface is imported from '../../types/autoscope'
 
 // ============================================================================
 // FETCH RULES FROM DATABASE
@@ -802,6 +811,54 @@ export function buildManufacturerContext(
 }
 
 // ============================================================================
+// BUILD ASSIGNED MATERIALS FROM PRICING (for material-based triggers)
+// ============================================================================
+
+/**
+ * Build AssignedMaterial array from material assignments and pricing data
+ * This enables material_category and sku_pattern trigger conditions
+ *
+ * @param materialAssignments - Material assignments from Detection Editor
+ * @param pricingMap - Map of pricing item ID to PricingItem (from getPricingByIds)
+ * @returns Array of AssignedMaterial for trigger condition evaluation
+ */
+export function buildAssignedMaterialsFromPricing(
+  materialAssignments: MaterialAssignmentForGrouping[],
+  pricingMap: Map<string, { sku: string; category?: string; manufacturer?: string }>
+): AssignedMaterial[] {
+  const materials: AssignedMaterial[] = [];
+  const seenSkus = new Set<string>();
+
+  for (const assignment of materialAssignments) {
+    const itemId = assignment.pricing_item_id || assignment.assigned_material_id;
+    if (!itemId) continue;
+
+    const pricing = pricingMap.get(itemId);
+    if (!pricing || !pricing.sku) continue;
+
+    // Deduplicate by SKU - we only need one entry per SKU for trigger matching
+    if (seenSkus.has(pricing.sku)) continue;
+    seenSkus.add(pricing.sku);
+
+    materials.push({
+      sku: pricing.sku,
+      category: pricing.category || 'unknown',
+      manufacturer: pricing.manufacturer || 'Unknown',
+      pricing_item_id: itemId,
+    });
+  }
+
+  if (materials.length > 0) {
+    console.log(`[AutoScope] Built ${materials.length} unique assigned materials for trigger evaluation:`);
+    for (const m of materials) {
+      console.log(`  - ${m.sku} (${m.category}) [${m.manufacturer}]`);
+    }
+  }
+
+  return materials;
+}
+
+// ============================================================================
 // EVALUATE TRIGGER CONDITIONS (FIXED for actual DB format)
 // ============================================================================
 
@@ -812,12 +869,18 @@ export function buildManufacturerContext(
  * - { "min_corners": 1 } → trigger if corners >= 1
  * - { "min_openings": 1 } → trigger if openings >= 1
  * - { "min_net_area": 500 } → trigger if net_siding_area >= 500
+ * - { "material_category": "board_batten" } → only if assigned material has this category
+ * - { "sku_pattern": "16OC-CP" } → only if assigned material SKU contains this pattern
+ *
+ * Multiple conditions use AND logic - all must match for rule to apply.
  */
 export function shouldApplyRule(
   rule: DbAutoScopeRule,
-  context: MeasurementContext
+  context: MeasurementContext,
+  assignedMaterials?: AssignedMaterial[]
 ): { applies: boolean; reason: string } {
   const tc = rule.trigger_condition;
+  const materials = assignedMaterials || [];
 
   // No trigger condition = always apply
   if (!tc) {
@@ -829,45 +892,88 @@ export function shouldApplyRule(
     return { applies: true, reason: 'always=true' };
   }
 
+  // Track matched conditions for reason string
+  const matchedConditions: string[] = [];
+
+  // =========================================================================
+  // MATERIAL-BASED TRIGGERS (NEW) - Check first, fail fast if no match
+  // =========================================================================
+
+  // { "material_category": "board_batten" } - check if any assigned material has this category
+  if (tc.material_category !== undefined) {
+    const requiredCategory = tc.material_category.toLowerCase();
+    const hasMatchingCategory = materials.some(
+      m => m.category?.toLowerCase() === requiredCategory
+    );
+
+    if (!hasMatchingCategory) {
+      return {
+        applies: false,
+        reason: `no material with category '${tc.material_category}'`
+      };
+    }
+    matchedConditions.push(`category=${tc.material_category}`);
+  }
+
+  // { "sku_pattern": "16OC-CP" } - check if any assigned material SKU contains this pattern
+  if (tc.sku_pattern !== undefined) {
+    const pattern = tc.sku_pattern.toLowerCase();
+    const hasMatchingSku = materials.some(
+      m => m.sku?.toLowerCase().includes(pattern)
+    );
+
+    if (!hasMatchingSku) {
+      return {
+        applies: false,
+        reason: `no material SKU matching pattern '${tc.sku_pattern}'`
+      };
+    }
+    matchedConditions.push(`sku~${tc.sku_pattern}`);
+  }
+
+  // =========================================================================
+  // MEASUREMENT-BASED TRIGGERS (existing logic)
+  // =========================================================================
+
   // { "min_corners": N } - check total corners
   if (tc.min_corners !== undefined) {
     const totalCorners = context.outside_corners_count + context.inside_corners_count;
-    if (totalCorners >= tc.min_corners) {
-      return { applies: true, reason: `corners=${totalCorners} >= ${tc.min_corners}` };
+    if (totalCorners < tc.min_corners) {
+      return { applies: false, reason: `corners=${totalCorners} < ${tc.min_corners}` };
     }
-    return { applies: false, reason: `corners=${totalCorners} < ${tc.min_corners}` };
+    matchedConditions.push(`corners>=${tc.min_corners}`);
   }
 
   // { "min_openings": N } - check total openings
   if (tc.min_openings !== undefined) {
-    if (context.openings_count >= tc.min_openings) {
-      return { applies: true, reason: `openings=${context.openings_count} >= ${tc.min_openings}` };
+    if (context.openings_count < tc.min_openings) {
+      return { applies: false, reason: `openings=${context.openings_count} < ${tc.min_openings}` };
     }
-    return { applies: false, reason: `openings=${context.openings_count} < ${tc.min_openings}` };
+    matchedConditions.push(`openings>=${tc.min_openings}`);
   }
 
   // { "min_net_area": N } - check net siding area
   if (tc.min_net_area !== undefined) {
-    if (context.net_siding_area_sqft >= tc.min_net_area) {
-      return { applies: true, reason: `net_area=${context.net_siding_area_sqft} >= ${tc.min_net_area}` };
+    if (context.net_siding_area_sqft < tc.min_net_area) {
+      return { applies: false, reason: `net_area=${context.net_siding_area_sqft} < ${tc.min_net_area}` };
     }
-    return { applies: false, reason: `net_area=${context.net_siding_area_sqft} < ${tc.min_net_area}` };
+    matchedConditions.push(`net_area>=${tc.min_net_area}`);
   }
 
   // { "min_facade_area": N } - check facade area
   if (tc.min_facade_area !== undefined) {
-    if (context.facade_area_sqft >= tc.min_facade_area) {
-      return { applies: true, reason: `facade_area=${context.facade_area_sqft} >= ${tc.min_facade_area}` };
+    if (context.facade_area_sqft < tc.min_facade_area) {
+      return { applies: false, reason: `facade_area=${context.facade_area_sqft} < ${tc.min_facade_area}` };
     }
-    return { applies: false, reason: `facade_area=${context.facade_area_sqft} < ${tc.min_facade_area}` };
+    matchedConditions.push(`facade_area>=${tc.min_facade_area}`);
   }
 
   // { "min_belly_band_lf": N } - check belly band linear feet
   if (tc.min_belly_band_lf !== undefined) {
-    if (context.belly_band_lf >= tc.min_belly_band_lf) {
-      return { applies: true, reason: `belly_band_lf=${context.belly_band_lf} >= ${tc.min_belly_band_lf}` };
+    if (context.belly_band_lf < tc.min_belly_band_lf) {
+      return { applies: false, reason: `belly_band_lf=${context.belly_band_lf} < ${tc.min_belly_band_lf}` };
     }
-    return { applies: false, reason: `belly_band_lf=${context.belly_band_lf} < ${tc.min_belly_band_lf}` };
+    matchedConditions.push(`belly_band>=${tc.min_belly_band_lf}`);
   }
 
   // =========================================================================
@@ -876,66 +982,74 @@ export function shouldApplyRule(
 
   // { "min_trim_total_lf": N } - check total trim linear feet (>= comparison)
   if (tc.min_trim_total_lf !== undefined) {
-    if (context.trim_total_lf >= tc.min_trim_total_lf) {
-      return { applies: true, reason: `trim_total_lf=${context.trim_total_lf} >= ${tc.min_trim_total_lf}` };
+    if (context.trim_total_lf < tc.min_trim_total_lf) {
+      return { applies: false, reason: `trim_total_lf=${context.trim_total_lf} < ${tc.min_trim_total_lf}` };
     }
-    return { applies: false, reason: `trim_total_lf=${context.trim_total_lf} < ${tc.min_trim_total_lf}` };
+    matchedConditions.push(`trim_total>=${tc.min_trim_total_lf}`);
   }
 
   // { "trim_total_lf_gt": N } - check total trim linear feet (> comparison, alternative syntax)
   if (tc.trim_total_lf_gt !== undefined) {
-    if (context.trim_total_lf > tc.trim_total_lf_gt) {
-      return { applies: true, reason: `trim_total_lf=${context.trim_total_lf} > ${tc.trim_total_lf_gt}` };
+    if (context.trim_total_lf <= tc.trim_total_lf_gt) {
+      return { applies: false, reason: `trim_total_lf=${context.trim_total_lf} <= ${tc.trim_total_lf_gt}` };
     }
-    return { applies: false, reason: `trim_total_lf=${context.trim_total_lf} <= ${tc.trim_total_lf_gt}` };
+    matchedConditions.push(`trim_total>${tc.trim_total_lf_gt}`);
   }
 
   // { "min_trim_head_lf": N } - check head trim linear feet
   if (tc.min_trim_head_lf !== undefined) {
-    if (context.trim_head_lf >= tc.min_trim_head_lf) {
-      return { applies: true, reason: `trim_head_lf=${context.trim_head_lf} >= ${tc.min_trim_head_lf}` };
+    if (context.trim_head_lf < tc.min_trim_head_lf) {
+      return { applies: false, reason: `trim_head_lf=${context.trim_head_lf} < ${tc.min_trim_head_lf}` };
     }
-    return { applies: false, reason: `trim_head_lf=${context.trim_head_lf} < ${tc.min_trim_head_lf}` };
+    matchedConditions.push(`trim_head>=${tc.min_trim_head_lf}`);
   }
 
   // { "trim_head_lf_gt": N } - check head trim linear feet (> comparison)
   if (tc.trim_head_lf_gt !== undefined) {
-    if (context.trim_head_lf > tc.trim_head_lf_gt) {
-      return { applies: true, reason: `trim_head_lf=${context.trim_head_lf} > ${tc.trim_head_lf_gt}` };
+    if (context.trim_head_lf <= tc.trim_head_lf_gt) {
+      return { applies: false, reason: `trim_head_lf=${context.trim_head_lf} <= ${tc.trim_head_lf_gt}` };
     }
-    return { applies: false, reason: `trim_head_lf=${context.trim_head_lf} <= ${tc.trim_head_lf_gt}` };
+    matchedConditions.push(`trim_head>${tc.trim_head_lf_gt}`);
   }
 
   // { "min_trim_jamb_lf": N } - check jamb trim linear feet
   if (tc.min_trim_jamb_lf !== undefined) {
-    if (context.trim_jamb_lf >= tc.min_trim_jamb_lf) {
-      return { applies: true, reason: `trim_jamb_lf=${context.trim_jamb_lf} >= ${tc.min_trim_jamb_lf}` };
+    if (context.trim_jamb_lf < tc.min_trim_jamb_lf) {
+      return { applies: false, reason: `trim_jamb_lf=${context.trim_jamb_lf} < ${tc.min_trim_jamb_lf}` };
     }
-    return { applies: false, reason: `trim_jamb_lf=${context.trim_jamb_lf} < ${tc.min_trim_jamb_lf}` };
+    matchedConditions.push(`trim_jamb>=${tc.min_trim_jamb_lf}`);
   }
 
   // { "trim_jamb_lf_gt": N } - check jamb trim linear feet (> comparison)
   if (tc.trim_jamb_lf_gt !== undefined) {
-    if (context.trim_jamb_lf > tc.trim_jamb_lf_gt) {
-      return { applies: true, reason: `trim_jamb_lf=${context.trim_jamb_lf} > ${tc.trim_jamb_lf_gt}` };
+    if (context.trim_jamb_lf <= tc.trim_jamb_lf_gt) {
+      return { applies: false, reason: `trim_jamb_lf=${context.trim_jamb_lf} <= ${tc.trim_jamb_lf_gt}` };
     }
-    return { applies: false, reason: `trim_jamb_lf=${context.trim_jamb_lf} <= ${tc.trim_jamb_lf_gt}` };
+    matchedConditions.push(`trim_jamb>${tc.trim_jamb_lf_gt}`);
   }
 
   // { "min_trim_sill_lf": N } - check sill trim linear feet
   if (tc.min_trim_sill_lf !== undefined) {
-    if (context.trim_sill_lf >= tc.min_trim_sill_lf) {
-      return { applies: true, reason: `trim_sill_lf=${context.trim_sill_lf} >= ${tc.min_trim_sill_lf}` };
+    if (context.trim_sill_lf < tc.min_trim_sill_lf) {
+      return { applies: false, reason: `trim_sill_lf=${context.trim_sill_lf} < ${tc.min_trim_sill_lf}` };
     }
-    return { applies: false, reason: `trim_sill_lf=${context.trim_sill_lf} < ${tc.min_trim_sill_lf}` };
+    matchedConditions.push(`trim_sill>=${tc.min_trim_sill_lf}`);
   }
 
   // { "trim_sill_lf_gt": N } - check sill trim linear feet (> comparison)
   if (tc.trim_sill_lf_gt !== undefined) {
-    if (context.trim_sill_lf > tc.trim_sill_lf_gt) {
-      return { applies: true, reason: `trim_sill_lf=${context.trim_sill_lf} > ${tc.trim_sill_lf_gt}` };
+    if (context.trim_sill_lf <= tc.trim_sill_lf_gt) {
+      return { applies: false, reason: `trim_sill_lf=${context.trim_sill_lf} <= ${tc.trim_sill_lf_gt}` };
     }
-    return { applies: false, reason: `trim_sill_lf=${context.trim_sill_lf} <= ${tc.trim_sill_lf_gt}` };
+    matchedConditions.push(`trim_sill>${tc.trim_sill_lf_gt}`);
+  }
+
+  // =========================================================================
+  // All conditions passed - return with reason string
+  // =========================================================================
+
+  if (matchedConditions.length > 0) {
+    return { applies: true, reason: matchedConditions.join(', ') };
   }
 
   // Unknown trigger condition format - log and apply by default
@@ -1004,6 +1118,7 @@ export async function generateAutoScopeItemsV2(
 
   const manufacturerGroups = options?.manufacturerGroups || {};
   const manufacturerNames = Object.keys(manufacturerGroups);
+  const assignedMaterials = options?.assignedMaterials || [];
 
   // 1. Build measurement context (total project measurements)
   let dbMeasurements: CadHoverMeasurements | null = null;
@@ -1031,6 +1146,9 @@ export async function generateAutoScopeItemsV2(
     console.log(`   Manufacturer groups: ${manufacturerNames.join(', ')}`);
   } else {
     console.log(`   No manufacturer groups - only generic rules will apply`);
+  }
+  if (assignedMaterials.length > 0) {
+    console.log(`   Assigned materials: ${assignedMaterials.map(m => m.sku).join(', ')}`);
   }
 
   // V8.0: Log spatial containment status
@@ -1072,7 +1190,7 @@ export async function generateAutoScopeItemsV2(
       // =====================================================================
       // GENERIC RULE: Apply to total project measurements
       // =====================================================================
-      const { applies, reason } = shouldApplyRule(rule, totalContext);
+      const { applies, reason } = shouldApplyRule(rule, totalContext, assignedMaterials);
 
       if (applies) {
         const { result: quantity, error } = evaluateFormula(rule.quantity_formula, totalContext);
@@ -1125,7 +1243,7 @@ export async function generateAutoScopeItemsV2(
         // Build manufacturer-specific context
         const mfrContext = buildManufacturerContext(totalContext, mfrData);
 
-        const { applies, reason } = shouldApplyRule(rule, mfrContext);
+        const { applies, reason } = shouldApplyRule(rule, mfrContext, assignedMaterials);
 
         if (applies) {
           const { result: quantity, error } = evaluateFormula(rule.quantity_formula, mfrContext);
