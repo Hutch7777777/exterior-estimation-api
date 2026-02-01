@@ -1870,10 +1870,12 @@ export async function calculateWithAutoScopeV2(
   const materialTotal = lineItems.reduce((sum, item) => sum + (item.material_extended || 0), 0);
   console.log(`📊 Material total: $${materialTotal.toFixed(2)}`);
 
-  // Get facade area for labor calculations (prefer net_siding_area_sqft, fall back to facade_sqft)
-  const facadeAreaSqft = webhookMeasurements?.net_siding_area_sqft ||
-    webhookMeasurements?.facade_sqft ||
+  // Get facade area for labor calculations
+  // IMPORTANT: Use gross facade area (NOT net siding) for WRB and demo calculations
+  // WRB covers the entire wall including areas behind openings
+  const facadeAreaSqft = webhookMeasurements?.facade_sqft ||
     webhookMeasurements?.gross_wall_area_sqft ||
+    webhookMeasurements?.net_siding_area_sqft ||  // Fallback only if gross not available
     0;
 
   // Calculate installation labor using auto-scope rules (or legacy method if no rules)
