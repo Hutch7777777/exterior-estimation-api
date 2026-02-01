@@ -412,6 +412,7 @@ export async function buildManufacturerGroups(
   console.log('[AutoScope] Manufacturers found:', manufacturers);
 
   // Group assignments by manufacturer
+  // FIX: Ensure each area is only counted ONCE to prevent 3x inflation bug
   for (const assignment of materialAssignments) {
     const itemId = assignment.pricing_item_id || assignment.assigned_material_id;
     const pricing = itemId ? pricingMap.get(itemId) : undefined;
@@ -439,26 +440,42 @@ export async function buildManufacturerGroups(
     }
 
     // Aggregate based on unit type
+    // FIX: Use mutually exclusive logic to prevent double-counting
     const unit = assignment.unit?.toUpperCase() || '';
     const quantity = Number(assignment.quantity) || 0;
 
     if (unit === 'SF' || unit === 'SQFT' || unit === 'SQ FT') {
+      // Unit is SF - use quantity as area
       groups[manufacturer].area_sqft += quantity;
+      console.log(`   📐 [${manufacturer}] +${quantity.toFixed(1)} SF from quantity (unit=${unit})`);
     } else if (unit === 'LF' || unit === 'LINEAR FT' || unit === 'LINFT') {
+      // Unit is LF - use quantity as linear feet
       groups[manufacturer].linear_ft += quantity;
-    } else if (unit === 'EA' || unit === 'EACH' || unit === 'PC' || unit === 'PIECE') {
+      console.log(`   📏 [${manufacturer}] +${quantity.toFixed(1)} LF from quantity (unit=${unit})`);
+    } else if (unit === 'EA' || unit === 'EACH' || unit === 'PC' || unit === 'PIECE' || unit === 'PCS') {
+      // Unit is pieces - use quantity as count
       groups[manufacturer].piece_count += quantity;
+      console.log(`   🔢 [${manufacturer}] +${quantity} EA from quantity (unit=${unit})`);
+    } else if (assignment.area_sqft && assignment.area_sqft > 0) {
+      // Unknown unit but area_sqft is provided - use area_sqft ONLY (not quantity)
+      groups[manufacturer].area_sqft += assignment.area_sqft;
+      console.log(`   📐 [${manufacturer}] +${assignment.area_sqft.toFixed(1)} SF from area_sqft (unknown unit='${unit}')`);
     } else {
-      // Default to area for unknown units (most siding is area-based)
+      // Unknown unit, no area_sqft - assume quantity is area (fallback)
       groups[manufacturer].area_sqft += quantity;
+      console.log(`   📐 [${manufacturer}] +${quantity.toFixed(1)} SF from quantity (fallback, unit='${unit}')`);
     }
 
-    // Also add explicit area/perimeter if provided (for non-unit-based assignments)
-    if (assignment.area_sqft && unit !== 'SF') {
-      groups[manufacturer].area_sqft += assignment.area_sqft;
-    }
-    if (assignment.perimeter_lf && unit !== 'LF') {
+    // FIX: REMOVED the old double-counting code that added area_sqft again:
+    // OLD CODE (was causing double-counting):
+    // if (assignment.area_sqft && unit !== 'SF') {
+    //   groups[manufacturer].area_sqft += assignment.area_sqft;
+    // }
+
+    // Add perimeter_lf only if unit is NOT already LF (prevent double-counting)
+    if (assignment.perimeter_lf && unit !== 'LF' && unit !== 'LINEAR FT' && unit !== 'LINFT') {
       groups[manufacturer].linear_ft += assignment.perimeter_lf;
+      console.log(`   📏 [${manufacturer}] +${assignment.perimeter_lf.toFixed(1)} LF from perimeter_lf`);
     }
 
     // Track detection IDs for provenance
@@ -469,6 +486,8 @@ export async function buildManufacturerGroups(
 
   // =========================================================================
   // V8.0: SPATIAL CONTAINMENT - Merge per-material opening measurements
+  // FIX: Do NOT add facade_sqft if manufacturer already exists from material_assignments
+  // This was causing 3x inflation: 1) quantity, 2) area_sqft, 3) facade_sqft
   // =========================================================================
   if (perMaterialMeasurements && Object.keys(perMaterialMeasurements).length > 0) {
     console.log(`[AutoScope V8.0] Merging per-material measurements from spatial containment`);
@@ -496,6 +515,19 @@ export async function buildManufacturerGroups(
           piece_count: 0,
           detection_ids: perMatMeasures.facades || [],
         };
+        console.log(`   📐 [${manufacturer}] Created from per_material: ${(perMatMeasures.facade_sqft || 0).toFixed(1)} SF`);
+      } else {
+        // FIX: Manufacturer already exists from material_assignments
+        // DO NOT add facade_sqft - this would cause double/triple counting!
+        // Only merge detection_ids for provenance tracking
+        console.log(`   ⏭️ [${manufacturer}] Already has ${groups[manufacturer].area_sqft.toFixed(1)} SF from assignments, skipping per_material facade_sqft (${(perMatMeasures.facade_sqft || 0).toFixed(1)} SF)`);
+
+        if (perMatMeasures.facades && perMatMeasures.facades.length > 0) {
+          groups[manufacturer].detection_ids = [
+            ...(groups[manufacturer].detection_ids || []),
+            ...perMatMeasures.facades
+          ];
+        }
       }
 
       const group = groups[manufacturer];
@@ -618,6 +650,19 @@ export async function buildManufacturerGroups(
       console.log(`    - Trim: ${data.trim_total_lf.toFixed(2)} LF (V8.1 spatial)`);
     }
   }
+
+  // =========================================================================
+  // VALIDATION SUMMARY - Check for potential inflation issues
+  // =========================================================================
+  const totalArea = Object.values(groups).reduce((sum, g) => sum + (g.area_sqft || 0), 0);
+  const totalLinear = Object.values(groups).reduce((sum, g) => sum + (g.linear_ft || 0), 0);
+  const totalPieces = Object.values(groups).reduce((sum, g) => sum + (g.piece_count || 0), 0);
+
+  console.log(`\n🔍 MANUFACTURER GROUPS VALIDATION SUMMARY:`);
+  console.log(`   Manufacturers: ${Object.keys(groups).length}`);
+  console.log(`   Total Area: ${totalArea.toFixed(2)} SF (${(totalArea / 100).toFixed(2)} squares)`);
+  console.log(`   Total Linear: ${totalLinear.toFixed(2)} LF`);
+  console.log(`   Total Pieces: ${totalPieces}`);
 
   return groups;
 }
