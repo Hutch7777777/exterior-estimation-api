@@ -380,12 +380,22 @@ export async function buildManufacturerGroups(
     return groups;
   }
 
+  // Debug: Log incoming assignments to verify field names
+  console.log('[AutoScope] Material assignments received:', materialAssignments.map(a => ({
+    pricing_item_id: a.pricing_item_id,
+    assigned_material_id: a.assigned_material_id,
+    quantity: a.quantity,
+    unit: a.unit
+  })));
+
   // Get unique pricing item IDs (accept both field names)
   const pricingItemIds = [...new Set(
     materialAssignments
       .map(a => a.pricing_item_id || a.assigned_material_id)
       .filter((id): id is string => Boolean(id && id.trim() !== ''))
   )];
+
+  console.log('[AutoScope] Extracted pricing item IDs:', pricingItemIds);
 
   if (pricingItemIds.length === 0) {
     console.log('[AutoScope] No valid pricing item IDs in assignments');
@@ -396,6 +406,10 @@ export async function buildManufacturerGroups(
   const pricingMap = await getPricingByIds(pricingItemIds, organizationId);
 
   console.log(`[AutoScope] Fetched pricing for ${pricingMap.size}/${pricingItemIds.length} items`);
+
+  // Debug: Log manufacturers found
+  const manufacturers = [...new Set([...pricingMap.values()].map(p => p.manufacturer).filter(Boolean))];
+  console.log('[AutoScope] Manufacturers found:', manufacturers);
 
   // Group assignments by manufacturer
   for (const assignment of materialAssignments) {
