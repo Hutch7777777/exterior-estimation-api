@@ -1899,9 +1899,22 @@ export async function calculateWithAutoScopeV2(
   // Get facade area for labor calculations
   // IMPORTANT: Use gross facade area (NOT net siding) for WRB and demo calculations
   // WRB covers the entire wall including areas behind openings
-  const facadeAreaSqft = webhookMeasurements?.facade_sqft ||
-    webhookMeasurements?.gross_wall_area_sqft ||
-    webhookMeasurements?.net_siding_area_sqft ||  // Fallback only if gross not available
+  // Cast to any to check all possible property names since types may not be complete
+  const wmLabor = webhookMeasurements as any;
+
+  console.log(`   [DEBUG] webhookMeasurements keys: ${Object.keys(wmLabor || {}).join(', ')}`);
+  console.log(`   [DEBUG] wmLabor.facade_area_sqft: ${wmLabor?.facade_area_sqft}`);
+  console.log(`   [DEBUG] wmLabor.facade_sqft: ${wmLabor?.facade_sqft}`);
+  console.log(`   [DEBUG] wmLabor.facade_total_sqft: ${wmLabor?.facade_total_sqft}`);
+  console.log(`   [DEBUG] wmLabor.gross_wall_area_sqft: ${wmLabor?.gross_wall_area_sqft}`);
+  console.log(`   [DEBUG] wmLabor.net_siding_area_sqft: ${wmLabor?.net_siding_area_sqft}`);
+
+  const facadeAreaSqft = wmLabor?.facade_area_sqft ||      // MeasurementContext uses this
+    wmLabor?.facade_sqft ||                                 // WebhookMeasurements type has this
+    wmLabor?.facade_total_sqft ||                           // Database column name
+    wmLabor?.gross_wall_area_sqft ||                        // Alternative name
+    wmLabor?.net_siding_area_sqft ||                        // Fallback only if gross not available
+    wmLabor?.net_siding_sqft ||                             // Another variation
     0;
 
   // Calculate installation labor using auto-scope rules (or legacy method if no rules)
