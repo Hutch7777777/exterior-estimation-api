@@ -1552,14 +1552,18 @@ export async function generateAutoScopeItemsV2(
 
     // Build note from template with variable substitution
     // Extra values for template: quantity, coverage, waste_factor, piece_length, unit, unit_cost
+    // Use pricing_items.coverage_value for piece_length/coverage when available (manufacturer-specific)
+    // Fall back to extracting from formula if not set in pricing_items
+    const pricingCoverage = pricing?.coverage_value;
     const noteExtras: Record<string, number | string> = {
       quantity: finalQuantity,
       unit: rule.output_unit || rule.unit,
       unit_cost: materialUnitCost,
-      // Extract coverage from formula if present (e.g., "facade_area_sqft / 1350" → coverage = 1350)
-      coverage: extractCoverageFromFormula(rule.quantity_formula),
+      // Use pricing_items.coverage_value first (accurate for manufacturer products)
+      // Fall back to extracting from formula if not set
+      coverage: pricingCoverage || extractCoverageFromFormula(rule.quantity_formula),
+      piece_length: pricingCoverage || extractPieceLengthFromFormula(rule.quantity_formula),
       waste_factor: extractWasteFromFormula(rule.quantity_formula),
-      piece_length: extractPieceLengthFromFormula(rule.quantity_formula),
     };
 
     // Build note: use calculation_notes template if available, otherwise fall back to description
