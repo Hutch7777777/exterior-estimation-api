@@ -53,6 +53,9 @@ interface DbAutoScopeRule {
   // ['Nichiha'] = only applies to Nichiha products using Nichiha SF
   // ['Engage Building Products'] = only applies to FastPlank products
   manufacturer_filter: string[] | null;
+  // Template for generating line item notes with {variable} placeholders
+  // e.g., "{facade_sqft} SF ÷ {coverage} SF/roll = {quantity} rolls"
+  calculation_notes: string | null;
 }
 
 // Database uses this format for trigger conditions:
@@ -1195,6 +1198,136 @@ export function evaluateFormula(
 }
 
 // ============================================================================
+// BUILD NOTE FROM TEMPLATE
+// Substitutes {variable} placeholders with actual values from context
+// ============================================================================
+
+/**
+ * Build a descriptive note from a template with variable substitution.
+ *
+ * Template format: "{facade_sqft} SF facade ÷ {coverage} SF/roll = {quantity} rolls"
+ *
+ * Available variables (from MeasurementContext):
+ * - facade_sqft, net_siding_sqft, openings_perimeter_lf, openings_count
+ * - outside_corners_count, inside_corners_count, trim_total_lf
+ * - Plus calculated values: quantity, coverage, waste_factor, piece_length, unit_cost
+ *
+ * @param template - Note template with {variable} placeholders
+ * @param context - Measurement context with values
+ * @param extras - Additional values like quantity, coverage, waste_factor
+ * @returns Formatted note string with values substituted
+ */
+export function buildNoteFromTemplate(
+  template: string | null | undefined,
+  context: MeasurementContext,
+  extras: Record<string, number | string> = {}
+): string {
+  if (!template) return '';
+
+  // Merge context and extras into a single values map
+  const values: Record<string, number | string> = {
+    // From measurement context
+    facade_sqft: context.facade_sqft || context.facade_area_sqft || 0,
+    facade_area_sqft: context.facade_area_sqft || context.facade_sqft || 0,
+    net_siding_sqft: context.net_siding_area_sqft || 0,
+    net_siding_area_sqft: context.net_siding_area_sqft || 0,
+    openings_perimeter_lf: context.openings_perimeter_lf || context.total_opening_perimeter_lf || 0,
+    openings_count: context.openings_count || context.total_openings_count || 0,
+    openings_area_sqft: context.openings_area_sqft || context.total_openings_area_sqft || 0,
+    outside_corners_count: context.outside_corners_count || context.outside_corner_count || 0,
+    inside_corners_count: context.inside_corners_count || context.inside_corner_count || 0,
+    total_corner_count: (context.outside_corners_count || 0) + (context.inside_corners_count || 0),
+    outside_corner_lf: context.outside_corner_lf || 0,
+    inside_corner_lf: context.inside_corner_lf || 0,
+    total_corner_lf: context.total_corner_lf || 0,
+    trim_total_lf: context.trim_total_lf || 0,
+    trim_head_lf: context.trim_head_lf || 0,
+    trim_jamb_lf: context.trim_jamb_lf || 0,
+    trim_sill_lf: context.trim_sill_lf || 0,
+    facade_perimeter_lf: context.facade_perimeter_lf || context.level_starter_lf || 0,
+    corner_height: context.avg_wall_height_ft || context.facade_height_ft || 10,
+    belly_band_lf: context.belly_band_lf || 0,
+    window_count: context.window_count || 0,
+    door_count: context.door_count || 0,
+    // Override with extras (quantity, coverage, waste_factor, piece_length, unit_cost, etc.)
+    ...extras,
+  };
+
+  // Substitute all {variable} placeholders
+  let note = template;
+  for (const [key, value] of Object.entries(values)) {
+    const placeholder = new RegExp(`\\{${key}\\}`, 'g');
+    // Format numbers nicely (integers stay as integers, decimals get 1-2 places)
+    let displayValue: string;
+    if (typeof value === 'number') {
+      if (Number.isInteger(value)) {
+        displayValue = value.toString();
+      } else if (value >= 100) {
+        displayValue = value.toFixed(0); // Large numbers: no decimals
+      } else if (value >= 10) {
+        displayValue = value.toFixed(1); // Medium numbers: 1 decimal
+      } else {
+        displayValue = value.toFixed(2); // Small numbers: 2 decimals
+      }
+    } else {
+      displayValue = String(value);
+    }
+    note = note.replace(placeholder, displayValue);
+  }
+
+  // Clean up any remaining unsubstituted placeholders (show as "N/A")
+  note = note.replace(/\{[^}]+\}/g, 'N/A');
+
+  return note;
+}
+
+/**
+ * Extract coverage value from a formula string.
+ * Looks for patterns like "/ 1350" or "/ 100" in division operations.
+ * @returns Coverage value or 100 as default
+ */
+function extractCoverageFromFormula(formula: string): number {
+  // Match patterns like "/ 1350", "/ 100", "/1350", etc.
+  const divisionMatch = formula.match(/\/\s*(\d+(?:\.\d+)?)/);
+  if (divisionMatch) {
+    return parseFloat(divisionMatch[1]);
+  }
+  return 100; // Default coverage
+}
+
+/**
+ * Extract waste factor from a formula string.
+ * Looks for patterns like "* 1.10", "* 1.15", etc.
+ * @returns Waste factor or 1.10 as default (10% waste)
+ */
+function extractWasteFromFormula(formula: string): number {
+  // Match patterns like "* 1.10", "* 1.15", "*1.1", etc.
+  const wasteMatch = formula.match(/\*\s*(1\.\d+)/);
+  if (wasteMatch) {
+    return parseFloat(wasteMatch[1]);
+  }
+  return 1.10; // Default 10% waste
+}
+
+/**
+ * Extract piece length from a formula string.
+ * Looks for patterns like "/ 12" (12ft pieces), "/ 10" (10ft pieces), etc.
+ * @returns Piece length or 12 as default (12ft standard)
+ */
+function extractPieceLengthFromFormula(formula: string): number {
+  // For piece length, look for small divisors (typically 10 or 12 for board lengths)
+  const divisionMatch = formula.match(/\/\s*(\d+(?:\.\d+)?)/);
+  if (divisionMatch) {
+    const value = parseFloat(divisionMatch[1]);
+    // If it's a small value like 10 or 12, it's likely piece length
+    if (value <= 20) {
+      return value;
+    }
+  }
+  return 12; // Default 12ft piece length
+}
+
+// ============================================================================
 // MAIN: GENERATE AUTO-SCOPE ITEMS V2
 // ============================================================================
 
@@ -1274,6 +1407,7 @@ export async function generateAutoScopeItemsV2(
     rule: DbAutoScopeRule;
     quantity: number;
     manufacturer?: string;  // Which manufacturer this applies to (undefined = generic)
+    context: MeasurementContext;  // The context used for evaluation (for note generation)
   }> = [];
 
   // Siding-related material categories to skip when user has siding assignments
@@ -1310,7 +1444,7 @@ export async function generateAutoScopeItemsV2(
         }
 
         if (quantity > 0) {
-          triggeredRules.push({ rule, quantity, manufacturer: undefined });
+          triggeredRules.push({ rule, quantity, manufacturer: undefined, context: totalContext });
           result.rules_triggered++;
           console.log(`  ✓ Rule ${rule.rule_id}: ${rule.rule_name} [GENERIC: ${totalContext.facade_area_sqft.toFixed(0)} SF] → ${Math.ceil(quantity)} ${rule.unit} (${reason})`);
         } else {
@@ -1363,7 +1497,7 @@ export async function generateAutoScopeItemsV2(
           }
 
           if (quantity > 0) {
-            triggeredRules.push({ rule, quantity, manufacturer: mfrName });
+            triggeredRules.push({ rule, quantity, manufacturer: mfrName, context: mfrContext });
             result.rules_triggered++;
             console.log(`  ✓ Rule ${rule.rule_id}: ${rule.rule_name} [${mfrName}: ${mfrData.area_sqft.toFixed(0)} SF] → ${Math.ceil(quantity)} ${rule.unit} (${reason})`);
           } else {
@@ -1383,7 +1517,7 @@ export async function generateAutoScopeItemsV2(
   const pricingMap = await getPricingBySkus(skus, organizationId);
 
   // 5. Build line items with pricing
-  for (const { rule, quantity, manufacturer } of triggeredRules) {
+  for (const { rule, quantity, manufacturer, context } of triggeredRules) {
     const pricing = pricingMap.get(rule.material_sku);
 
     const materialUnitCost = Number(pricing?.material_cost || 0);
@@ -1395,6 +1529,32 @@ export async function generateAutoScopeItemsV2(
     const description = manufacturer
       ? `${rule.rule_name} (${manufacturer})`
       : rule.rule_name;
+
+    // Build note from template with variable substitution
+    // Extra values for template: quantity, coverage, waste_factor, piece_length, unit, unit_cost
+    const noteExtras: Record<string, number | string> = {
+      quantity: finalQuantity,
+      unit: rule.output_unit || rule.unit,
+      unit_cost: materialUnitCost,
+      // Extract coverage from formula if present (e.g., "facade_area_sqft / 1350" → coverage = 1350)
+      coverage: extractCoverageFromFormula(rule.quantity_formula),
+      waste_factor: extractWasteFromFormula(rule.quantity_formula),
+      piece_length: extractPieceLengthFromFormula(rule.quantity_formula),
+    };
+
+    // Build note: use calculation_notes template if available, otherwise fall back to description
+    let notes: string | undefined;
+    if (rule.calculation_notes) {
+      notes = buildNoteFromTemplate(rule.calculation_notes, context, noteExtras);
+      if (manufacturer) {
+        notes += ` [${manufacturer}]`;
+      }
+    } else {
+      // Fallback to old behavior
+      notes = manufacturer
+        ? `${rule.description || ''} [Applied to ${manufacturer} products]`.trim()
+        : rule.description || undefined;
+    }
 
     const lineItem: AutoScopeLineItem = {
       description,
@@ -1412,9 +1572,7 @@ export async function generateAutoScopeItemsV2(
       calculation_source: 'auto-scope',
       rule_id: String(rule.rule_id),
       formula_used: rule.quantity_formula,
-      notes: manufacturer
-        ? `${rule.description || ''} [Applied to ${manufacturer} products]`.trim()
-        : rule.description || undefined,
+      notes,
     };
 
     result.line_items.push(lineItem);
@@ -1451,6 +1609,7 @@ function getFallbackRules(): DbAutoScopeRule[] {
       created_at: now,
       updated_at: now,
       manufacturer_filter: null, // Generic rule - applies to all
+      calculation_notes: '{facade_sqft} SF facade ÷ 1350 SF/roll = {quantity} rolls',
     },
     {
       rule_id: 2,
@@ -1471,6 +1630,7 @@ function getFallbackRules(): DbAutoScopeRule[] {
       created_at: now,
       updated_at: now,
       manufacturer_filter: null, // Generic rule - applies to all
+      calculation_notes: '{net_siding_sqft} SF siding ÷ 100 SF/box = {quantity} boxes',
     },
     {
       rule_id: 3,
@@ -1491,6 +1651,7 @@ function getFallbackRules(): DbAutoScopeRule[] {
       created_at: now,
       updated_at: now,
       manufacturer_filter: null, // Generic rule - applies to all
+      calculation_notes: '{openings_perimeter_lf} LF openings ÷ 25 LF/tube = {quantity} tubes',
     },
   ];
 }
