@@ -78,6 +78,12 @@ export interface MeasurementContext {
   openings_count: number;             // alias for total_openings_count
   facade_perimeter_lf: number;        // computed from facade dimensions
   facade_height_ft: number;           // alias for avg_wall_height_ft
+
+  // =========================================================================
+  // MANUFACTURER-SPECIFIC AREAS (optional, set when manufacturer groups exist)
+  // =========================================================================
+  artisan_sqft?: number;              // Artisan siding SF (for tab/staple calculations)
+  artisan_area_sqft?: number;         // alias for artisan_sqft
 }
 
 // ============================================================================

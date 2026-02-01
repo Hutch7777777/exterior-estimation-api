@@ -1256,6 +1256,11 @@ export function buildNoteFromTemplate(
     belly_band_lf: bellyBandLf,
     window_count: context.window_count || 0,
     door_count: context.door_count || 0,
+    window_perimeter_lf: context.window_perimeter_lf || 0,
+    door_perimeter_lf: context.door_perimeter_lf || 0,
+
+    // Manufacturer-specific siding areas (for Artisan tabs, etc.)
+    artisan_sqft: context.artisan_sqft || context.artisan_area_sqft || 0,
 
     // Flashing-related computed values
     kickout_count: outsideCornersCount,  // Kickouts at roof-to-wall intersections ≈ outside corners
