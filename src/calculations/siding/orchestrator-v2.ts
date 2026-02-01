@@ -159,6 +159,7 @@ export interface CombinedLineItem {
   rule_id?: string;
   formula_used?: string;
   notes?: string;
+  raw_quantity?: number;  // Original SF/LF before conversion (for note rebuilding during consolidation)
 }
 
 export interface V2CalculationResult {
@@ -500,15 +501,17 @@ function calculateInstallationLaborFromRules(
       console.log(`   ✅ ADDING LABOR: ${rule.rule_name}: ${quantity.toFixed(2)} ${rule.quantity_unit} × $${unitCost}/${rule.quantity_unit} = $${totalCost.toFixed(2)}`);
 
       // Build meaningful notes based on trigger type
+      // Use rate.unit as fallback if rule.quantity_unit is undefined
+      const displayUnit = rule.quantity_unit || rate.unit || 'ea';
       let notes = '';
       if (rule.trigger_type === 'always' && rule.quantity_source === 'facade_sqft') {
         notes = `${sourceInfo} = ${quantity.toFixed(2)} SQ @ $${unitCost.toFixed(2)}/SQ`;
       } else if (rule.trigger_type === 'detection_class') {
-        notes = `${sourceInfo} @ $${unitCost.toFixed(2)}/EA`;
+        notes = `${sourceInfo} @ $${unitCost.toFixed(2)}/${displayUnit}`;
       } else if (rule.trigger_type === 'material_category') {
-        notes = `${sourceInfo} = ${quantity.toFixed(2)} ${rule.quantity_unit} @ $${unitCost.toFixed(2)}/${rule.quantity_unit}`;
+        notes = `${sourceInfo} = ${quantity.toFixed(2)} ${displayUnit} @ $${unitCost.toFixed(2)}/${displayUnit}`;
       } else {
-        notes = `${quantity.toFixed(2)} ${rule.quantity_unit} @ $${unitCost.toFixed(2)}/${rule.quantity_unit}`;
+        notes = `${quantity.toFixed(2)} ${displayUnit} @ $${unitCost.toFixed(2)}/${displayUnit}`;
       }
 
       laborItems.push({
@@ -1101,6 +1104,7 @@ export async function calculateWithAutoScopeV2(
         detection_ids: [assignment.detection_id],
         detection_count: 1,
         notes,
+        raw_quantity: effectiveQuantity,  // Original SF/LF for note rebuilding during consolidation
       });
 
       totalMaterialCost += materialCost;
@@ -2101,9 +2105,10 @@ export async function calculateWithAutoScopeV2(
 /**
  * Consolidate line items by pricing_item_id (or SKU as fallback)
  * Merges multiple items with the same product into a single line item
+ * FIXED: Now rebuilds notes using the combined total raw quantity
  */
 function consolidateLineItems(lineItems: CombinedLineItem[]): CombinedLineItem[] {
-  const consolidated = new Map<string, CombinedLineItem>();
+  const consolidated = new Map<string, CombinedLineItem & { raw_quantity_total?: number }>();
 
   for (const item of lineItems) {
     const key = item.pricing_item_id || item.sku;
@@ -2115,6 +2120,9 @@ function consolidateLineItems(lineItems: CombinedLineItem[]): CombinedLineItem[]
       existing.labor_extended += item.labor_extended;
       existing.total_extended += item.total_extended;
       existing.squares_for_labor = (existing.squares_for_labor || 0) + (item.squares_for_labor || 0);
+
+      // Track raw quantity for note rebuilding (SF or LF before conversion)
+      existing.raw_quantity_total = (existing.raw_quantity_total || 0) + (item.raw_quantity || item.quantity);
 
       // Track all detection IDs for provenance
       if (item.detection_ids) {
@@ -2129,18 +2137,47 @@ function consolidateLineItems(lineItems: CombinedLineItem[]): CombinedLineItem[]
         detection_ids: item.detection_ids || (item.detection_id ? [item.detection_id] : []),
         detection_count: 1,
         squares_for_labor: item.squares_for_labor || 0,
+        raw_quantity_total: item.raw_quantity || item.quantity,
       });
     }
   }
 
-  // Round all monetary values and return
-  return Array.from(consolidated.values()).map(item => ({
-    ...item,
-    quantity: Math.round(item.quantity * 100) / 100,
-    material_extended: Math.round(item.material_extended * 100) / 100,
-    labor_extended: Math.round(item.labor_extended * 100) / 100,
-    total_extended: Math.round(item.total_extended * 100) / 100
-  }));
+  // Round all monetary values and rebuild notes with total quantities
+  return Array.from(consolidated.values()).map(item => {
+    const roundedQty = Math.round(item.quantity * 100) / 100;
+    const rawTotal = item.raw_quantity_total || 0;
+
+    // Rebuild notes if multiple items were consolidated (detection_count > 1)
+    let finalNotes = item.notes;
+    if (item.detection_count && item.detection_count > 1 && rawTotal > 0) {
+      const unit = item.unit?.toLowerCase() || '';
+      const wasteMultiplier = 1.12;
+
+      // Determine note format based on unit and original note pattern
+      if (item.notes?.includes('SF/pc') || item.notes?.includes('pieces')) {
+        // SF to pieces conversion - extract coverage from original note or use default
+        const coverageMatch = item.notes.match(/÷\s*([\d.]+)\s*SF\/pc/);
+        const coverage = coverageMatch ? parseFloat(coverageMatch[1]) : 7.25;
+        finalNotes = `${rawTotal.toFixed(0)} SF × ${wasteMultiplier} waste ÷ ${coverage} SF/pc = ${roundedQty} pcs`;
+      } else if (item.notes?.includes('SF') && item.notes?.includes('SQ')) {
+        // SF to squares conversion
+        finalNotes = `${rawTotal.toFixed(0)} SF × ${wasteMultiplier} waste ÷ 100 = ${roundedQty} SQ`;
+      } else if (item.notes?.includes('LF') && (unit === 'ea' || unit === 'pc' || item.notes?.includes('pcs'))) {
+        // LF to pieces conversion
+        finalNotes = `${rawTotal.toFixed(1)} LF ÷ 12ft × ${wasteMultiplier} waste = ${roundedQty} pcs`;
+      }
+      // Otherwise keep original notes
+    }
+
+    return {
+      ...item,
+      quantity: roundedQty,
+      material_extended: Math.round(item.material_extended * 100) / 100,
+      labor_extended: Math.round(item.labor_extended * 100) / 100,
+      total_extended: Math.round(item.total_extended * 100) / 100,
+      notes: finalNotes,
+    };
+  });
 }
 
 /**

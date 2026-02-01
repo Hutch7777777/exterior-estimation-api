@@ -1225,18 +1225,25 @@ export function buildNoteFromTemplate(
   if (!template) return '';
 
   // Merge context and extras into a single values map
+  const outsideCornersCount = context.outside_corners_count || context.outside_corner_count || 0;
+  const insideCornersCount = context.inside_corners_count || context.inside_corner_count || 0;
+  const totalCornerCount = outsideCornersCount + insideCornersCount;
+  const facadePerimeterLf = context.facade_perimeter_lf || context.level_starter_lf || 0;
+  const netSidingSqft = context.net_siding_area_sqft || 0;
+  const bellyBandLf = context.belly_band_lf || 0;
+
   const values: Record<string, number | string> = {
     // From measurement context
     facade_sqft: context.facade_sqft || context.facade_area_sqft || 0,
     facade_area_sqft: context.facade_area_sqft || context.facade_sqft || 0,
-    net_siding_sqft: context.net_siding_area_sqft || 0,
-    net_siding_area_sqft: context.net_siding_area_sqft || 0,
+    net_siding_sqft: netSidingSqft,
+    net_siding_area_sqft: netSidingSqft,
     openings_perimeter_lf: context.openings_perimeter_lf || context.total_opening_perimeter_lf || 0,
     openings_count: context.openings_count || context.total_openings_count || 0,
     openings_area_sqft: context.openings_area_sqft || context.total_openings_area_sqft || 0,
-    outside_corners_count: context.outside_corners_count || context.outside_corner_count || 0,
-    inside_corners_count: context.inside_corners_count || context.inside_corner_count || 0,
-    total_corner_count: (context.outside_corners_count || 0) + (context.inside_corners_count || 0),
+    outside_corners_count: outsideCornersCount,
+    inside_corners_count: insideCornersCount,
+    total_corner_count: totalCornerCount,
     outside_corner_lf: context.outside_corner_lf || 0,
     inside_corner_lf: context.inside_corner_lf || 0,
     total_corner_lf: context.total_corner_lf || 0,
@@ -1244,11 +1251,24 @@ export function buildNoteFromTemplate(
     trim_head_lf: context.trim_head_lf || 0,
     trim_jamb_lf: context.trim_jamb_lf || 0,
     trim_sill_lf: context.trim_sill_lf || 0,
-    facade_perimeter_lf: context.facade_perimeter_lf || context.level_starter_lf || 0,
+    facade_perimeter_lf: facadePerimeterLf,
     corner_height: context.avg_wall_height_ft || context.facade_height_ft || 10,
-    belly_band_lf: context.belly_band_lf || 0,
+    belly_band_lf: bellyBandLf,
     window_count: context.window_count || 0,
     door_count: context.door_count || 0,
+
+    // Flashing-related computed values
+    kickout_count: outsideCornersCount,  // Kickouts at roof-to-wall intersections ≈ outside corners
+    lf_per_corner: 11,  // Standard 11 LF per corner with waste
+    lf_per_opening: 3,  // Standard 3 LF average per opening for head flashing
+    joint_count: Math.ceil(netSidingSqft / 100),  // Estimate horizontal joints (1 per 100 SF)
+    source_lf: bellyBandLf || facadePerimeterLf,  // Generic source LF
+    joint_lf: facadePerimeterLf,  // Joint LF for caulk calculations
+
+    // Gable-related
+    gable_count: context.gable_count || 0,
+    gable_area_sqft: context.gable_area_sqft || 0,
+
     // Override with extras (quantity, coverage, waste_factor, piece_length, unit_cost, etc.)
     ...extras,
   };
