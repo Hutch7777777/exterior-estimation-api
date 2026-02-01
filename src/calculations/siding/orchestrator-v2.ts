@@ -1039,6 +1039,7 @@ export async function calculateWithAutoScopeV2(
       area_sqft: a.area_sf ?? undefined,  // Map area_sf to area_sqft, convert null to undefined
       perimeter_lf: a.perimeter_lf ?? undefined,  // Convert null to undefined
       detection_id: a.detection_id,
+      detection_class: a.detection_class,  // Pass detection_class for overlap filtering
     })),
     organizationId,
     perMaterialMeasurements  // V8.0: Pass per-material measurements from spatial containment

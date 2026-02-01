@@ -354,6 +354,7 @@ export interface MaterialAssignmentForGrouping {
   area_sqft?: number;
   perimeter_lf?: number;
   detection_id?: string;
+  detection_class?: string;  // Added for class-based filtering to prevent double-counting
 }
 
 /**
@@ -380,17 +381,59 @@ export async function buildManufacturerGroups(
     return groups;
   }
 
+  // =========================================================================
+  // CLASS-BASED FILTERING - Prevent double-counting overlapping polygons
+  // When users draw 'siding' polygons INSIDE 'exterior wall' polygons, both
+  // get material assignments. We should only count the siding-specific ones.
+  // =========================================================================
+
+  // Classes that represent actual siding installation areas
+  const SIDING_SPECIFIC_CLASSES = ['siding', 'gable'];
+  // Classes that are parent containers (should be excluded when siding polygons exist)
+  const PARENT_CONTAINER_CLASSES = ['exterior wall', 'exterior_wall', 'building', 'facade', 'exterior_walls'];
+
+  // Check if siding-specific polygons exist
+  const hasSidingPolygons = materialAssignments.some(a => {
+    const cls = (a.detection_class || '').toLowerCase();
+    return SIDING_SPECIFIC_CLASSES.some(sc => cls.includes(sc));
+  });
+
+  // Filter assignments to prevent double-counting
+  const filteredAssignments = materialAssignments.filter(a => {
+    const cls = (a.detection_class || '').toLowerCase();
+
+    // Always include siding-specific classes
+    if (SIDING_SPECIFIC_CLASSES.some(sc => cls.includes(sc))) {
+      return true;
+    }
+
+    // If siding polygons exist, exclude parent container classes (they overlap)
+    if (hasSidingPolygons && PARENT_CONTAINER_CLASSES.some(pc => cls.includes(pc))) {
+      console.log(`   ⏭️ Skipping '${a.detection_class}' class - siding polygons exist (preventing overlap double-count)`);
+      return false;
+    }
+
+    // Include everything else (windows, doors, trim, corners, etc.)
+    return true;
+  });
+
+  const removedCount = materialAssignments.length - filteredAssignments.length;
+  if (removedCount > 0) {
+    console.log(`🏭 Filtered ${materialAssignments.length} assignments → ${filteredAssignments.length} (removed ${removedCount} overlapping parent containers)`);
+  }
+
   // Debug: Log incoming assignments to verify field names
-  console.log('[AutoScope] Material assignments received:', materialAssignments.map(a => ({
+  console.log('[AutoScope] Material assignments received:', filteredAssignments.map(a => ({
     pricing_item_id: a.pricing_item_id,
     assigned_material_id: a.assigned_material_id,
     quantity: a.quantity,
-    unit: a.unit
+    unit: a.unit,
+    detection_class: a.detection_class
   })));
 
-  // Get unique pricing item IDs (accept both field names)
+  // Get unique pricing item IDs from FILTERED assignments (accept both field names)
   const pricingItemIds = [...new Set(
-    materialAssignments
+    filteredAssignments
       .map(a => a.pricing_item_id || a.assigned_material_id)
       .filter((id): id is string => Boolean(id && id.trim() !== ''))
   )];
@@ -411,9 +454,9 @@ export async function buildManufacturerGroups(
   const manufacturers = [...new Set([...pricingMap.values()].map(p => p.manufacturer).filter(Boolean))];
   console.log('[AutoScope] Manufacturers found:', manufacturers);
 
-  // Group assignments by manufacturer
+  // Group FILTERED assignments by manufacturer
   // FIX: Ensure each area is only counted ONCE to prevent 3x inflation bug
-  for (const assignment of materialAssignments) {
+  for (const assignment of filteredAssignments) {
     const itemId = assignment.pricing_item_id || assignment.assigned_material_id;
     const pricing = itemId ? pricingMap.get(itemId) : undefined;
 
@@ -663,6 +706,20 @@ export async function buildManufacturerGroups(
   console.log(`   Total Area: ${totalArea.toFixed(2)} SF (${(totalArea / 100).toFixed(2)} squares)`);
   console.log(`   Total Linear: ${totalLinear.toFixed(2)} LF`);
   console.log(`   Total Pieces: ${totalPieces}`);
+
+  // Log class filtering summary if any assignments were filtered
+  if (materialAssignments.length !== filteredAssignments.length) {
+    const skippedAssignments = materialAssignments.filter(a => !filteredAssignments.includes(a));
+    const skippedClasses = [...new Set(skippedAssignments.map(a => a.detection_class).filter(Boolean))];
+    const skippedArea = skippedAssignments.reduce((sum, a) => sum + (a.quantity || 0), 0);
+
+    console.log(`\n🔍 CLASS FILTERING SUMMARY (Overlap Prevention):`);
+    console.log(`   Original assignments: ${materialAssignments.length}`);
+    console.log(`   After filtering: ${filteredAssignments.length}`);
+    console.log(`   Removed (overlapping): ${materialAssignments.length - filteredAssignments.length}`);
+    console.log(`   Skipped classes: ${skippedClasses.join(', ')}`);
+    console.log(`   Area NOT counted (was overlapping): ${skippedArea.toFixed(2)} SF`);
+  }
 
   return groups;
 }
