@@ -329,7 +329,7 @@ function calculateInstallationLaborFromRules(
         unit: matchingRate.unit || 'SQ',
         unit_cost: unitCost,
         total_cost: Math.round(totalCost * 100) / 100,
-        notes: `Grouped by labor_class from pricing_items`
+        notes: `${(data.sqft || data.squares * 100).toFixed(0)} SF ÷ 100 = ${data.squares.toFixed(2)} SQ @ $${unitCost.toFixed(2)}/SQ`
       });
 
       // =========================================================================
@@ -361,7 +361,7 @@ function calculateInstallationLaborFromRules(
             unit: colorplusPremiumRate.unit || 'SQ',
             unit_cost: premiumUnitCost,
             total_cost: Math.round(premiumTotalCost * 100) / 100,
-            notes: `ColorPlus premium for ${laborClassName}`
+            notes: `ColorPlus premium: ${data.colorplusSquares.toFixed(2)} SQ @ $${premiumUnitCost.toFixed(2)}/SQ`
           });
         } else {
           console.log(`   ⚠️ No ColorPlus premium rate found for ${data.colorplusSquares.toFixed(2)} SQ of ColorPlus material`);
@@ -407,6 +407,10 @@ function calculateInstallationLaborFromRules(
       }
     }
 
+    // Track source info for meaningful notes
+    let sourceInfo = '';
+    let rawValue = 0;
+
     // Evaluate trigger condition
     if (rule.trigger_type === 'always') {
       // Always apply (e.g., WRB, demo/cleanup)
@@ -414,7 +418,9 @@ function calculateInstallationLaborFromRules(
       console.log(`      ✓ trigger_type='always' - shouldApply=true`);
 
       if (rule.quantity_source === 'facade_sqft') {
+        rawValue = facadeAreaSqft;
         quantity = facadeAreaSqft / 100; // Convert to squares
+        sourceInfo = `${facadeAreaSqft.toFixed(0)} SF facade ÷ 100`;
         console.log(`      ✓ quantity_source='facade_sqft' - quantity=${quantity.toFixed(2)} SQ (from ${facadeAreaSqft} SF)`);
       } else {
         console.log(`      ⚠️ quantity_source='${rule.quantity_source}' not handled for 'always' trigger`);
@@ -423,20 +429,28 @@ function calculateInstallationLaborFromRules(
     } else if (rule.trigger_type === 'material_category') {
       // Check if any of the trigger categories have materials (non-siding items)
       const categories = (rule.trigger_value || '').split(',').map(c => c.trim().toLowerCase());
+      const matchedCategories: string[] = [];
 
       for (const cat of categories) {
         const catData = materialsByCategory[cat];
         if (catData) {
           shouldApply = true;
+          matchedCategories.push(cat);
 
           if (rule.quantity_source === 'material_sqft') {
+            rawValue += catData.sqft;
             quantity += catData.sqft / 100; // Convert to squares
           } else if (rule.quantity_source === 'material_count') {
+            rawValue += catData.count;
             quantity += catData.count;
           } else if (rule.quantity_source === 'material_lf') {
+            rawValue += catData.lf;
             quantity += catData.lf;
           }
         }
+      }
+      if (matchedCategories.length > 0) {
+        sourceInfo = `${matchedCategories.join(', ')}: ${rawValue.toFixed(rule.quantity_source === 'material_count' ? 0 : 1)} ${rule.quantity_source === 'material_sqft' ? 'SF' : rule.quantity_source === 'material_lf' ? 'LF' : 'EA'}`;
       }
 
     } else if (rule.trigger_type === 'material_sku_pattern') {
@@ -449,18 +463,26 @@ function calculateInstallationLaborFromRules(
       if (matchingItems.length > 0) {
         shouldApply = true;
         quantity = matchingItems.reduce((sum, item) => sum + item.quantity, 0);
+        rawValue = quantity;
+        sourceInfo = `${matchingItems.length} items matching ${pattern}*`;
       }
 
     } else if (rule.trigger_type === 'detection_class') {
       // Check detection counts
       const classes = (rule.trigger_value || '').split(',').map(c => c.trim().toLowerCase());
+      const detectedItems: string[] = [];
 
       for (const cls of classes) {
         const detection = detectionCounts?.[cls];
-        if (detection) {
+        if (detection && detection.count > 0) {
           shouldApply = true;
           quantity += detection.count || 0;
+          rawValue += detection.count || 0;
+          detectedItems.push(`${detection.count} ${cls}`);
         }
+      }
+      if (detectedItems.length > 0) {
+        sourceInfo = detectedItems.join(' + ');
       }
     }
 
@@ -477,6 +499,18 @@ function calculateInstallationLaborFromRules(
 
       console.log(`   ✅ ADDING LABOR: ${rule.rule_name}: ${quantity.toFixed(2)} ${rule.quantity_unit} × $${unitCost}/${rule.quantity_unit} = $${totalCost.toFixed(2)}`);
 
+      // Build meaningful notes based on trigger type
+      let notes = '';
+      if (rule.trigger_type === 'always' && rule.quantity_source === 'facade_sqft') {
+        notes = `${sourceInfo} = ${quantity.toFixed(2)} SQ @ $${unitCost.toFixed(2)}/SQ`;
+      } else if (rule.trigger_type === 'detection_class') {
+        notes = `${sourceInfo} @ $${unitCost.toFixed(2)}/EA`;
+      } else if (rule.trigger_type === 'material_category') {
+        notes = `${sourceInfo} = ${quantity.toFixed(2)} ${rule.quantity_unit} @ $${unitCost.toFixed(2)}/${rule.quantity_unit}`;
+      } else {
+        notes = `${quantity.toFixed(2)} ${rule.quantity_unit} @ $${unitCost.toFixed(2)}/${rule.quantity_unit}`;
+      }
+
       laborItems.push({
         rate_id: rate.id,
         rate_name: rate.rate_name,
@@ -485,7 +519,7 @@ function calculateInstallationLaborFromRules(
         unit: rule.quantity_unit || rate.unit,
         unit_cost: unitCost,
         total_cost: Math.round(totalCost * 100) / 100,
-        notes: `From rule: ${rule.rule_id}`
+        notes
       });
     }
   }
@@ -962,7 +996,8 @@ export async function calculateWithAutoScopeV2(
       // Check both detection_class AND pricing.category for trim products
       // =========================================================================
       let effectiveQuantity = assignment.quantity;
-      let notes = `From detection: ${assignment.quantity.toFixed(2)} ${assignment.unit}`;
+      // Notes will be built after quantity calculation with full formula details
+      let notes = '';
 
       const detectionClass = assignment.detection_class?.toLowerCase() || '';
       const pricingCategory = pricing.category?.toLowerCase() || '';
@@ -1002,6 +1037,29 @@ export async function calculateWithAutoScopeV2(
       const quantity = calculateMaterialQuantity(effectiveAssignment, pricing);
       const materialCost = quantity * Number(pricing.material_cost || 0);
       const materialExtended = Math.round(materialCost * 100) / 100;
+
+      // Build descriptive notes based on the calculation type
+      const wasteMultiplier = 1.12;
+      const pricingUnit = pricing.unit?.toLowerCase() || '';
+
+      if (!notes) {  // Only set if not already set by trim fallback
+        if (assignment.unit === 'SF' && (pricingUnit === 'square' || pricingUnit === 'sq')) {
+          // SF to squares
+          notes = `${effectiveQuantity.toFixed(0)} SF × ${wasteMultiplier} waste ÷ 100 = ${quantity} SQ`;
+        } else if (assignment.unit === 'SF' && (pricingUnit === 'ea' || pricingUnit === 'pc' || pricingUnit === 'piece')) {
+          // SF to pieces using coverage
+          const coveragePerPiece = pricing.coverage_value || 7.25;
+          notes = `${effectiveQuantity.toFixed(0)} SF × ${wasteMultiplier} waste ÷ ${coveragePerPiece} SF/pc = ${quantity} pcs`;
+        } else if (assignment.unit === 'LF' && (pricingUnit === 'ea' || pricingUnit === 'pc' || pricingUnit === 'pieces')) {
+          // LF to pieces
+          const pieceLength = 12;
+          notes = `${effectiveQuantity.toFixed(1)} LF ÷ ${pieceLength}ft × ${wasteMultiplier} waste = ${quantity} pcs`;
+        } else if (assignment.unit === 'EA') {
+          notes = `${quantity} ${assignment.detection_class || 'items'} from detection`;
+        } else {
+          notes = `${effectiveQuantity.toFixed(1)} ${assignment.unit} × ${wasteMultiplier} waste = ${quantity} ${pricingUnit}`;
+        }
+      }
 
       // Calculate squares for labor (SF / 100 = squares)
       let squaresForLabor = 0;
