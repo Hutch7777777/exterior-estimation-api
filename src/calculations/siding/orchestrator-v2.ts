@@ -12,6 +12,7 @@ import {
   generateAutoScopeItemsV2,
   buildMeasurementContext,
   buildManufacturerGroups,
+  buildAssignedMaterialsFromPricing,
 } from './autoscope-v2';
 import { AutoScopeLineItem } from '../../types/autoscope';
 import { getSupabaseClient, isDatabaseConfigured } from '../../services/database';
@@ -1046,6 +1047,34 @@ export async function calculateWithAutoScopeV2(
     console.log(`   ${mfr}: ${data.area_sqft.toFixed(0)} SF, ${data.linear_ft.toFixed(0)} LF${openingsInfo}`);
   }
 
+  // =========================================================================
+  // BUILD ASSIGNED MATERIALS for trigger condition evaluation
+  // This enables material_category-based auto-scope rules (e.g., Artisan)
+  // =========================================================================
+  let assignedMaterialsForAutoScope: { sku: string; category: string; manufacturer: string; pricing_item_id?: string }[] = [];
+
+  if (materialAssignments && materialAssignments.length > 0) {
+    // Fetch pricing for all assigned materials to get categories
+    const pricingIds = materialAssignments.map(m => m.pricing_item_id);
+    const pricingMapForAutoScope = await getPricingByIds(pricingIds, organizationId);
+
+    // Build the assigned materials list using the utility function
+    assignedMaterialsForAutoScope = buildAssignedMaterialsFromPricing(
+      materialAssignments.map(a => ({
+        pricing_item_id: a.pricing_item_id,
+        assigned_material_id: a.pricing_item_id,
+        quantity: a.quantity,
+        unit: a.unit,
+      })),
+      pricingMapForAutoScope
+    );
+
+    console.log(`🎨 [Artisan Debug] Built ${assignedMaterialsForAutoScope.length} assigned materials for auto-scope:`);
+    for (const m of assignedMaterialsForAutoScope) {
+      console.log(`   - SKU: ${m.sku}, Category: ${m.category}, Manufacturer: ${m.manufacturer}`);
+    }
+  }
+
   const autoScopeResult = await generateAutoScopeItemsV2(
     extractionId,
     enrichedMeasurements,
@@ -1053,6 +1082,7 @@ export async function calculateWithAutoScopeV2(
     {
       skipSidingPanels: hasSidingAssignments,
       manufacturerGroups,  // Pass manufacturer groups for per-manufacturer rules
+      assignedMaterials: assignedMaterialsForAutoScope,  // Pass assigned materials for category-based rules
       // V8.0: Pass spatial containment metadata for logging/diagnostics
       spatialContainment: spatialContainment,
     }
@@ -2009,6 +2039,8 @@ function getPresentationGroup(category?: string): string {
     'shingle_siding': 'Siding',
     'panel_siding': 'Siding',
     'vertical_siding': 'Siding',
+    'artisan': 'Siding',              // Artisan beaded lap siding (James Hardie)
+    'artisan_siding': 'Siding',       // Alternative artisan category
 
     // Trim & Corners
     'trim': 'Trim',
