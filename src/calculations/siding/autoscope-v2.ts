@@ -1557,17 +1557,33 @@ export async function generateAutoScopeItemsV2(
 
     // Build note from template with variable substitution
     // Extra values for template: quantity, coverage, waste_factor, piece_length, unit, unit_cost
-    // Use pricing_items.coverage_value for piece_length/coverage when available (manufacturer-specific)
+    // Use pricing_items.coverage_value for coverage when available (manufacturer-specific)
     // Fall back to extracting from formula if not set in pricing_items
     const pricingCoverage = pricing?.coverage_value;
+
+    // Determine coverage: use pricing_items.coverage_value if it exists and is > 0
+    // Otherwise extract from the formula (e.g., "/ 1350" → 1350)
+    const coverageValue = (pricingCoverage && pricingCoverage > 0)
+      ? pricingCoverage
+      : extractCoverageFromFormula(rule.quantity_formula);
+
+    // Determine piece_length: for trim/corner products, use coverage_value as piece length
+    // For area-based products (like WRB), extract from formula or use 12ft default
+    const isAreaBased = rule.material_category === 'water_barrier' ||
+                        rule.material_category === 'wrb' ||
+                        rule.material_category === 'house_wrap';
+    const pieceLengthValue = isAreaBased
+      ? extractPieceLengthFromFormula(rule.quantity_formula) // WRB doesn't use piece_length
+      : (pricingCoverage && pricingCoverage > 0 && pricingCoverage <= 20)
+        ? pricingCoverage  // Use coverage_value for trim (it's the piece length in LF)
+        : extractPieceLengthFromFormula(rule.quantity_formula);
+
     const noteExtras: Record<string, number | string> = {
       quantity: finalQuantity,
       unit: rule.output_unit || rule.unit,
       unit_cost: materialUnitCost,
-      // Use pricing_items.coverage_value first (accurate for manufacturer products)
-      // Fall back to extracting from formula if not set
-      coverage: pricingCoverage || extractCoverageFromFormula(rule.quantity_formula),
-      piece_length: pricingCoverage || extractPieceLengthFromFormula(rule.quantity_formula),
+      coverage: coverageValue,
+      piece_length: pieceLengthValue,
       waste_factor: extractWasteFromFormula(rule.quantity_formula),
     };
 
