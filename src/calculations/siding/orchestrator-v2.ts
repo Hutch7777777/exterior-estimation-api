@@ -771,7 +771,9 @@ export async function calculateWithAutoScopeV2(
     matched_openings: number;
     total_openings: number;
     unmatched_openings?: number;
-  }
+  },
+  // Config fields from frontend (for paint service, etc.)
+  config?: Record<string, any>
 ): Promise<V2CalculationResult> {
   // =========================================================================
   // DEBUG: Log ALL incoming parameters at function entry
@@ -1210,6 +1212,8 @@ export async function calculateWithAutoScopeV2(
       assignedMaterials: assignedMaterialsForAutoScope,  // Pass assigned materials for category-based rules
       // V8.0: Pass spatial containment metadata for logging/diagnostics
       spatialContainment: spatialContainment,
+      // Pass config for trigger_condition field checks (e.g., paint_service_type)
+      config,
     }
   );
 

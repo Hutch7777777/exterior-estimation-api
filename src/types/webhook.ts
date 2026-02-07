@@ -104,6 +104,10 @@ export interface WebhookRequest {
   // Trade-specific config
   siding?: WebhookSidingConfig;
 
+  // Generic config fields from frontend (for trigger_condition checks)
+  // e.g., { paint_service_type: 'in_house', paint_coats: '2', ... }
+  config?: Record<string, any>;
+
   // Measurements (from HOVER extraction) - optional if using material_assignments
   measurements?: WebhookMeasurements;
 

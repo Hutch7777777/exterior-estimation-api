@@ -200,6 +200,10 @@ export interface AssignedMaterial {
   manufacturer: string;
   /** Optional: pricing item ID for traceability */
   pricing_item_id?: string;
+  /** Whether this is a ColorPlus (pre-finished) product */
+  is_colorplus?: boolean;
+  /** Whether this product requires primer (primed products need painting) */
+  requires_primer?: boolean;
 }
 
 export interface AutoScopeV2Options {
@@ -218,6 +222,10 @@ export interface AutoScopeV2Options {
     total_openings: number;
     unmatched_openings?: number;
   };
+
+  // Config field values from webhook (for trigger_condition checks)
+  /** Config values like paint_service_type, paint_coats, etc. */
+  config?: Record<string, any>;
 }
 
 // ============================================================================

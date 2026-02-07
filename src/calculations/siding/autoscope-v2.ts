@@ -56,6 +56,9 @@ interface DbAutoScopeRule {
   // Template for generating line item notes with {variable} placeholders
   // e.g., "{facade_sqft} SF ÷ {coverage} SF/roll = {quantity} rolls"
   calculation_notes: string | null;
+  // NEW: Exclusion conditions based on material attributes
+  // [{ "attribute": "is_colorplus", "equals": true }] - skip if material is ColorPlus
+  excludes_if_attributes?: ExcludesIfAttribute[] | null;
 }
 
 // Database uses this format for trigger conditions:
@@ -67,6 +70,8 @@ interface DbAutoScopeRule {
 // NEW: Material-based triggers for SKU pattern matching
 // { "material_category": "board_batten" } - only when assigned material has this category
 // { "sku_pattern": "16OC-CP" } - only when assigned material SKU contains this pattern
+// NEW: Config field triggers for service options (e.g., paint service)
+// { "field": "paint_service_type", "equals": "in_house" } - check config field value
 interface DbTriggerCondition {
   always?: boolean;
   min_corners?: number;
@@ -86,6 +91,16 @@ interface DbTriggerCondition {
   // NEW: Material-based triggers (match against assigned materials)
   material_category?: string;  // e.g., "board_batten" - matches pricing_items.category
   sku_pattern?: string;        // e.g., "16OC-CP" - substring match against pricing_items.sku
+  // NEW: Config field triggers (check frontend config values)
+  field?: string;              // Config field name, e.g., "paint_service_type"
+  equals?: any;                // Expected value, e.g., "in_house"
+}
+
+// Exclusion condition format for excludes_if_attributes
+// [{ "attribute": "is_colorplus", "equals": true }] - skip rule if material has this attribute
+interface ExcludesIfAttribute {
+  attribute: string;  // Property name on assigned material (e.g., "is_colorplus", "requires_primer")
+  equals: any;        // Value to check against
 }
 
 // NOTE: AssignedMaterial interface is imported from '../../types/autoscope'
@@ -982,13 +997,17 @@ export function buildAssignedMaterialsFromPricing(
  * - { "min_net_area": 500 } → trigger if net_siding_area >= 500
  * - { "material_category": "board_batten" } → only if assigned material has this category
  * - { "sku_pattern": "16OC-CP" } → only if assigned material SKU contains this pattern
+ * - { "field": "paint_service_type", "equals": "in_house" } → check config field value
  *
  * Multiple conditions use AND logic - all must match for rule to apply.
+ *
+ * After trigger conditions pass, excludes_if_attributes is checked to potentially skip the rule.
  */
 export function shouldApplyRule(
   rule: DbAutoScopeRule,
   context: MeasurementContext,
-  assignedMaterials?: AssignedMaterial[]
+  assignedMaterials?: AssignedMaterial[],
+  config?: Record<string, any>
 ): { applies: boolean; reason: string } {
   const tc = rule.trigger_condition;
   const materials = assignedMaterials || [];
@@ -1040,6 +1059,28 @@ export function shouldApplyRule(
       };
     }
     matchedConditions.push(`sku~${tc.sku_pattern}`);
+  }
+
+  // =========================================================================
+  // CONFIG FIELD TRIGGERS - Check frontend config values
+  // Format: { "field": "paint_service_type", "equals": "in_house" }
+  // =========================================================================
+
+  if (tc.field !== undefined && tc.equals !== undefined) {
+    const configValue = config?.[tc.field];
+
+    // String comparison (case-insensitive for flexibility)
+    const matches = typeof configValue === 'string' && typeof tc.equals === 'string'
+      ? configValue.toLowerCase() === tc.equals.toLowerCase()
+      : configValue === tc.equals;
+
+    if (!matches) {
+      return {
+        applies: false,
+        reason: `config.${tc.field}='${configValue}' !== '${tc.equals}'`
+      };
+    }
+    matchedConditions.push(`config.${tc.field}=${tc.equals}`);
   }
 
   // =========================================================================
@@ -1153,6 +1194,31 @@ export function shouldApplyRule(
       return { applies: false, reason: `trim_sill_lf=${context.trim_sill_lf} <= ${tc.trim_sill_lf_gt}` };
     }
     matchedConditions.push(`trim_sill>${tc.trim_sill_lf_gt}`);
+  }
+
+  // =========================================================================
+  // All trigger conditions passed - now check exclusions
+  // =========================================================================
+
+  // Check excludes_if_attributes - skip rule if material has excluded attributes
+  if (rule.excludes_if_attributes && Array.isArray(rule.excludes_if_attributes)) {
+    for (const exclusion of rule.excludes_if_attributes) {
+      const { attribute, equals: expectedValue } = exclusion;
+
+      // Check against ALL assigned materials (if any has the excluded attribute, skip)
+      const hasExcludedAttribute = materials.some(material => {
+        // Dynamically access the attribute on the material object
+        const actualValue = (material as Record<string, any>)[attribute];
+        return actualValue === expectedValue;
+      });
+
+      if (hasExcludedAttribute) {
+        return {
+          applies: false,
+          reason: `excluded: material.${attribute} === ${expectedValue}`
+        };
+      }
+    }
   }
 
   // =========================================================================
@@ -1457,7 +1523,7 @@ export async function generateAutoScopeItemsV2(
       // =====================================================================
       // GENERIC RULE: Apply to total project measurements
       // =====================================================================
-      const { applies, reason } = shouldApplyRule(rule, totalContext, assignedMaterials);
+      const { applies, reason } = shouldApplyRule(rule, totalContext, assignedMaterials, options?.config);
 
       if (applies) {
         const { result: quantity, error } = evaluateFormula(rule.quantity_formula, totalContext);
@@ -1510,7 +1576,7 @@ export async function generateAutoScopeItemsV2(
         // Build manufacturer-specific context
         const mfrContext = buildManufacturerContext(totalContext, mfrData);
 
-        const { applies, reason } = shouldApplyRule(rule, mfrContext, assignedMaterials);
+        const { applies, reason } = shouldApplyRule(rule, mfrContext, assignedMaterials, options?.config);
 
         if (applies) {
           const { result: quantity, error } = evaluateFormula(rule.quantity_formula, mfrContext);
