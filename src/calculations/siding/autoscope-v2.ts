@@ -1012,25 +1012,25 @@ export function shouldApplyRule(
   const tc = rule.trigger_condition;
   const materials = assignedMaterials || [];
 
-  // No trigger condition = always apply
-  if (!tc) {
-    return { applies: true, reason: 'no condition' };
-  }
-
-  // { "always": true }
-  if (tc.always === true) {
-    return { applies: true, reason: 'always=true' };
-  }
-
   // Track matched conditions for reason string
   const matchedConditions: string[] = [];
 
-  // =========================================================================
-  // MATERIAL-BASED TRIGGERS (NEW) - Check first, fail fast if no match
-  // =========================================================================
+  // No trigger condition = always apply (but still check excludes_if_attributes)
+  if (!tc) {
+    matchedConditions.push('no condition');
+  }
+  // { "always": true } - mark as matched but don't return early (still check excludes_if_attributes)
+  else if (tc.always === true) {
+    matchedConditions.push('always=true');
+  }
+  // Other trigger conditions - need to evaluate each one
+  else {
+    // =========================================================================
+    // MATERIAL-BASED TRIGGERS - Check first, fail fast if no match
+    // =========================================================================
 
-  // { "material_category": "board_batten" } - check if any assigned material has this category
-  if (tc.material_category !== undefined) {
+    // { "material_category": "board_batten" } - check if any assigned material has this category
+    if (tc.material_category !== undefined) {
     const requiredCategory = tc.material_category.toLowerCase();
     const hasMatchingCategory = materials.some(
       m => m.category?.toLowerCase() === requiredCategory
@@ -1195,6 +1195,7 @@ export function shouldApplyRule(
     }
     matchedConditions.push(`trim_sill>${tc.trim_sill_lf_gt}`);
   }
+  } // End of else block for trigger condition evaluation
 
   // =========================================================================
   // All trigger conditions passed - now check exclusions
@@ -1611,10 +1612,15 @@ export async function generateAutoScopeItemsV2(
   for (const { rule, quantity, manufacturer, context } of triggeredRules) {
     const pricing = pricingMap.get(rule.material_sku);
 
-    const materialUnitCost = Number(pricing?.material_cost || 0);
+    const rawMaterialCost = Number(pricing?.material_cost || 0);
     const laborUnitCost = Number(pricing?.base_labor_cost || 0);
     const totalLaborRate = pricing?.total_labor_cost || calculateTotalLabor(laborUnitCost);
     const finalQuantity = Math.ceil(quantity);
+
+    // For labor-only SKUs (e.g., LABOR-PAINT-SIDING), use total_labor_cost as the unit cost
+    // This ensures paint labor shows the correct rate instead of $0.00
+    const isLaborOnlyItem = rawMaterialCost === 0 && totalLaborRate > 0;
+    const materialUnitCost = isLaborOnlyItem ? totalLaborRate : rawMaterialCost;
 
     // For manufacturer-specific rules, include manufacturer in description
     const description = manufacturer
