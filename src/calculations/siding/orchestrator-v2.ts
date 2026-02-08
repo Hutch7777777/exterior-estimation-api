@@ -1067,10 +1067,44 @@ export async function calculateWithAutoScopeV2(
       }
 
       // Calculate squares for labor (SF / 100 = squares)
+      // V8.2: Use NET area for siding installation labor (deduct openings from gross polygon area)
+      // Material quantities still use gross area (you need material to cover the full panel)
       let squaresForLabor = 0;
       if (assignment.unit === 'SF') {
-        squaresForLabor = effectiveQuantity / 100;
-        console.log(`   📐 Squares for labor: ${effectiveQuantity} SF / 100 = ${squaresForLabor.toFixed(2)} SQ`);
+        // Look up openings deduction from per-material measurements (V8.0 spatial containment)
+        const perMatData = perMaterialMeasurements?.[assignment.pricing_item_id];
+
+        // Fallback to global openings if per-material data not available
+        const globalOpenings = Number(wm?.openings_area_sqft) ||
+          Number(wm?.openings_sf) ||
+          ((Number(wm?.windows?.total_area_sqft) || 0) +
+           (Number(wm?.doors?.total_area_sqft) || 0) +
+           (Number(wm?.garages?.total_area_sqft) || 0));
+
+        // Use per-material openings if available, otherwise fall back to global
+        // For per-material, prorate based on this detection's share of the total facade
+        let openingsDeduction = 0;
+        if (perMatData?.openings_area_sqft && perMatData.openings_area_sqft > 0) {
+          // Per-material spatial containment data available
+          // If multiple detections share this material, prorate the openings
+          const materialTotalSqft = perMatData.facade_sqft || effectiveQuantity;
+          const detectionRatio = materialTotalSqft > 0 ? effectiveQuantity / materialTotalSqft : 1;
+          openingsDeduction = perMatData.openings_area_sqft * detectionRatio;
+        } else if (globalOpenings > 0) {
+          // Fall back to global openings proportioned by this detection's share
+          // Estimate total facade from all material assignments
+          const totalAssignedSqft = filteredMaterialAssignments
+            .filter(a => a.unit === 'SF')
+            .reduce((sum, a) => sum + (a.quantity || 0), 0);
+          const detectionRatio = totalAssignedSqft > 0 ? effectiveQuantity / totalAssignedSqft : 1;
+          openingsDeduction = globalOpenings * detectionRatio;
+        }
+
+        // Calculate NET area for labor (gross - openings)
+        const netQuantityForLabor = Math.max(0, effectiveQuantity - openingsDeduction);
+        squaresForLabor = netQuantityForLabor / 100;
+
+        console.log(`   📐 [Labor] ${assignment.detection_class}: gross=${effectiveQuantity.toFixed(1)} SF - openings=${openingsDeduction.toFixed(1)} SF = net=${netQuantityForLabor.toFixed(1)} SF (${squaresForLabor.toFixed(2)} SQ)`);
       }
 
       // Get consistent presentation_group and item_order
