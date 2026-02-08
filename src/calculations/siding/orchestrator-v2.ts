@@ -951,9 +951,9 @@ export async function calculateWithAutoScopeV2(
     // =========================================================================
     // CLASS-BASED FILTERING - WHITELIST APPROACH
     // Only include explicit siding installation surface classes.
-    // Excludes: garage (opening), exterior wall (container), building, facade, etc.
+    // Excludes: garage (opening), etc.
     // =========================================================================
-    const SIDING_INSTALLATION_CLASSES = ['siding', 'gable'];
+    const SIDING_INSTALLATION_CLASSES = ['siding', 'gable', 'exterior_wall', 'exterior wall', 'building', 'facade'];
 
     // Filter to ONLY include siding installation classes (whitelist approach)
     const filteredMaterialAssignments = materialAssignments.filter(a => {
