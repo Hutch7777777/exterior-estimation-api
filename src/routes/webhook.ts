@@ -65,10 +65,52 @@ router.post('/siding-estimator', async (req: Request, res: Response) => {
       console.log('✂️ Trim data from webhook:', JSON.stringify(trimData, null, 2));
       console.log('✂️ Trim total_trim_lf:', trimData?.total_trim_lf);
 
-      // Merge trim into measurements for buildMeasurementContext
+      // V8.2: Extract openings data - can be at top level OR nested in measurements
+      // n8n workflows may pass windows/doors/garages at top level instead of in measurements
+      const topLevel = webhookRequest as any;
+      const meas = (webhookRequest.measurements || {}) as any;
+
+      // Merge openings into a consistent structure for the orchestrator
+      // Priority: measurements.*.total_area_sqft > top-level.*.total_area_sqft > top-level.*.area_sf
+      const windowsData = meas.windows || {
+        count: topLevel.windows?.count,
+        total_area_sqft: topLevel.windows?.total_area_sqft || topLevel.windows?.area_sf,
+        perimeter_lf: topLevel.windows?.perimeter_lf,
+      };
+      const doorsData = meas.doors || {
+        count: topLevel.doors?.count,
+        total_area_sqft: topLevel.doors?.total_area_sqft || topLevel.doors?.area_sf,
+        perimeter_lf: topLevel.doors?.perimeter_lf,
+      };
+      const garagesData = meas.garages || {
+        count: topLevel.garages?.count,
+        total_area_sqft: topLevel.garages?.total_area_sqft || topLevel.garages?.area_sf,
+        perimeter_lf: topLevel.garages?.perimeter_lf,
+      };
+
+      // Calculate openings_area_sqft if not provided
+      const openingsAreaSqft = meas.openings_area_sqft ||
+        ((Number(windowsData?.total_area_sqft) || 0) +
+         (Number(doorsData?.total_area_sqft) || 0) +
+         (Number(garagesData?.total_area_sqft) || 0));
+
+      console.log('🚪 [V8.2] Openings data:', {
+        fromMeasurements: !!meas.windows,
+        fromTopLevel: !!topLevel.windows && !meas.windows,
+        windows_sf: windowsData?.total_area_sqft,
+        doors_sf: doorsData?.total_area_sqft,
+        garages_sf: garagesData?.total_area_sqft,
+        total_openings_sf: openingsAreaSqft,
+      });
+
+      // Merge trim and openings into measurements for buildMeasurementContext
       const enrichedMeasurements = {
         ...(webhookRequest.measurements || {}),
         trim: trimData,  // Ensure trim is available in measurements
+        windows: windowsData,
+        doors: doorsData,
+        garages: garagesData,
+        openings_area_sqft: openingsAreaSqft,
       };
 
       // Use V2 orchestrator which combines material assignments with auto-scope
@@ -226,10 +268,45 @@ router.post('/calculate-siding', async (req: Request, res: Response) => {
       console.log('✂️ Trim data from webhook (alias):', JSON.stringify(trimData, null, 2));
       console.log('✂️ Trim total_trim_lf (alias):', trimData?.total_trim_lf);
 
-      // Merge trim into measurements for buildMeasurementContext
+      // V8.2: Extract openings data - can be at top level OR nested in measurements
+      const topLevel = webhookRequest as any;
+      const meas = (webhookRequest.measurements || {}) as any;
+
+      const windowsData = meas.windows || {
+        count: topLevel.windows?.count,
+        total_area_sqft: topLevel.windows?.total_area_sqft || topLevel.windows?.area_sf,
+        perimeter_lf: topLevel.windows?.perimeter_lf,
+      };
+      const doorsData = meas.doors || {
+        count: topLevel.doors?.count,
+        total_area_sqft: topLevel.doors?.total_area_sqft || topLevel.doors?.area_sf,
+        perimeter_lf: topLevel.doors?.perimeter_lf,
+      };
+      const garagesData = meas.garages || {
+        count: topLevel.garages?.count,
+        total_area_sqft: topLevel.garages?.total_area_sqft || topLevel.garages?.area_sf,
+        perimeter_lf: topLevel.garages?.perimeter_lf,
+      };
+
+      const openingsAreaSqft = meas.openings_area_sqft ||
+        ((Number(windowsData?.total_area_sqft) || 0) +
+         (Number(doorsData?.total_area_sqft) || 0) +
+         (Number(garagesData?.total_area_sqft) || 0));
+
+      console.log('🚪 [V8.2] Openings data (alias):', {
+        fromMeasurements: !!meas.windows,
+        fromTopLevel: !!topLevel.windows && !meas.windows,
+        total_openings_sf: openingsAreaSqft,
+      });
+
+      // Merge trim and openings into measurements for buildMeasurementContext
       const enrichedMeasurements = {
         ...(webhookRequest.measurements || {}),
-        trim: trimData,  // Ensure trim is available in measurements
+        trim: trimData,
+        windows: windowsData,
+        doors: doorsData,
+        garages: garagesData,
+        openings_area_sqft: openingsAreaSqft,
       };
 
       // Use V2 orchestrator which combines material assignments with auto-scope
