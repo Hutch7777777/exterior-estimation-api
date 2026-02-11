@@ -1076,15 +1076,20 @@ export async function calculateWithAutoScopeV2(
         // Look up openings deduction from per-material measurements (V8.0 spatial containment)
         const perMatData = perMaterialMeasurements?.[assignment.pricing_item_id];
 
-        // Fallback to global openings if per-material data not available
-        const globalOpenings = Number(wm?.openings_area_sqft) ||
-          Number(wm?.openings_sf) ||
-          ((Number(wm?.windows?.total_area_sqft) || 0) +
-           (Number(wm?.doors?.total_area_sqft) || 0) +
-           (Number(wm?.garages?.total_area_sqft) || 0));
+        // V8.3: Calculate openings from actual detection data (most reliable source)
+        // This bypasses any issues with n8n payload forwarding
+        const OPENING_CLASSES = ['window', 'door', 'garage', 'garage_door', 'window_opening', 'door_opening', 'opening'];
 
-        // V8.2 DEBUG: Log globalOpenings calculation
-        console.log(`[Labor DEBUG] globalOpenings = ${globalOpenings} (wm.openings_area_sqft=${wm?.openings_area_sqft}, type=${typeof wm?.openings_area_sqft})`);
+        const openingsFromDetections = materialAssignments
+          .filter(ma => OPENING_CLASSES.includes(ma.detection_class?.toLowerCase()))
+          .reduce((sum, ma) => sum + (Number(ma.area_sf) || 0), 0);
+
+        // Use detection-based openings first, then fall back to measurements
+        const globalOpenings = openingsFromDetections > 0
+          ? openingsFromDetections
+          : (Number(wm?.openings_area_sqft) || 0);
+
+        console.log(`[Labor] globalOpenings: ${globalOpenings.toFixed(2)} SF (from detections: ${openingsFromDetections.toFixed(2)}, from measurements: ${Number(wm?.openings_area_sqft) || 0})`);
 
         // Use per-material openings if available, otherwise fall back to global
         // For per-material, prorate based on this detection's share of the total facade
