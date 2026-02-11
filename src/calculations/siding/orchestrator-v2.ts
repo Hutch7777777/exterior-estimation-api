@@ -1081,9 +1081,16 @@ export async function calculateWithAutoScopeV2(
            (Number(wm?.doors?.total_area_sqft) || 0) +
            (Number(wm?.garages?.total_area_sqft) || 0));
 
+        // V8.2 DEBUG: Log globalOpenings calculation
+        console.log(`[Labor DEBUG] globalOpenings = ${globalOpenings} (wm.openings_area_sqft=${wm?.openings_area_sqft}, type=${typeof wm?.openings_area_sqft})`);
+
         // Use per-material openings if available, otherwise fall back to global
         // For per-material, prorate based on this detection's share of the total facade
         let openingsDeduction = 0;
+
+        // V8.2 DEBUG: Log per-detection values before calculation
+        console.log(`[Labor DEBUG] Detection ${assignment.detection_class}: perMatData?.openings_area_sqft=${perMatData?.openings_area_sqft}, globalOpenings=${globalOpenings}, effectiveQuantity=${effectiveQuantity}`);
+
         if (perMatData?.openings_area_sqft && perMatData.openings_area_sqft > 0) {
           // Per-material spatial containment data available
           // If multiple detections share this material, prorate the openings
@@ -1099,6 +1106,9 @@ export async function calculateWithAutoScopeV2(
           const detectionRatio = totalAssignedSqft > 0 ? effectiveQuantity / totalAssignedSqft : 1;
           openingsDeduction = globalOpenings * detectionRatio;
         }
+
+        // V8.2 DEBUG: Log final openingsDeduction
+        console.log(`[Labor DEBUG] openingsDeduction = ${openingsDeduction}`);
 
         // Calculate NET area for labor (gross - openings)
         const netQuantityForLabor = Math.max(0, effectiveQuantity - openingsDeduction);
