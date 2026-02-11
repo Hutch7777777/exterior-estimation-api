@@ -113,6 +113,14 @@ router.post('/siding-estimator', async (req: Request, res: Response) => {
         openings_area_sqft: openingsAreaSqft,
       };
 
+      // V8.2 DEBUG: Log what we're passing to the orchestrator
+      console.log('📤 [webhook.ts] PASSING TO ORCHESTRATOR:', {
+        'enrichedMeasurements.openings_area_sqft': enrichedMeasurements.openings_area_sqft,
+        'enrichedMeasurements.windows.total_area_sqft': (enrichedMeasurements as any).windows?.total_area_sqft,
+        'enrichedMeasurements.doors.total_area_sqft': (enrichedMeasurements as any).doors?.total_area_sqft,
+        'enrichedMeasurements.garages.total_area_sqft': (enrichedMeasurements as any).garages?.total_area_sqft,
+      });
+
       // Use V2 orchestrator which combines material assignments with auto-scope
       // V8.0: Pass per_material_measurements and spatial_containment for per-manufacturer calculations
       const result = await calculateWithAutoScopeV2(

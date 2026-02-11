@@ -784,6 +784,8 @@ export async function calculateWithAutoScopeV2(
   console.log('   organizationId:', organizationId);
   console.log('   markupRate:', markupRate);
   console.log('   webhookMeasurements keys:', webhookMeasurements ? Object.keys(webhookMeasurements) : 'undefined');
+  console.log('   webhookMeasurements.openings_area_sqft:', (webhookMeasurements as any)?.openings_area_sqft);
+  console.log('   webhookMeasurements.windows?.total_area_sqft:', (webhookMeasurements as any)?.windows?.total_area_sqft);
   console.log('   webhookMeasurements.trim:', JSON.stringify((webhookMeasurements as any)?.trim, null, 2));
   console.log('📊 Detection Counts received:', JSON.stringify(detectionCounts, null, 2));
   console.log('🎯 Belly Band from detection_counts:', {
