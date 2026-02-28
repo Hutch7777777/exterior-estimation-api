@@ -2297,11 +2297,25 @@ function getPresentationGroup(category?: string): string {
     'vertical_siding': 'Siding',
     'artisan': 'Siding',              // Artisan beaded lap siding (James Hardie)
     'artisan_siding': 'Siding',       // Alternative artisan category
+    'board_batten': 'Siding',
+    'dutch_lap': 'Siding',
+    'shake_siding': 'Siding',
+    'insulated_siding': 'Siding',
+    'shiplap': 'Siding',
+    'corrugated': 'Siding',
+    'r_panel': 'Siding',
 
     // Trim & Corners
     'trim': 'Trim',
+    'starter_strip': 'Trim',
+    'j_channel': 'Trim',
+    'frieze_board': 'Trim',
+    'window_trim': 'Trim',
+    'trim_coil': 'Trim',
     'corner': 'Corners',
     'corners': 'Corners',
+    'inside_corner_trim': 'Corners',
+    'outside_corner_trim': 'Corners',
 
     // Belly Band
     'belly_band': 'Belly Band',
@@ -2333,13 +2347,20 @@ function getPresentationGroup(category?: string): string {
     'light_fixture': 'Flashing & Weatherproofing',
     'outlet': 'Flashing & Weatherproofing',
     'hose_bib': 'Flashing & Weatherproofing',
+    'underlayment': 'Flashing & Weatherproofing',
+    'flashing_tape': 'Flashing & Weatherproofing',
 
     // Fasteners & Accessories
     'fasteners': 'Fasteners',
+    'fastener': 'Fasteners',
     'accessories': 'Accessories',
+    'accessory': 'Accessories',
 
     // Caulk & Sealants
     'caulk': 'Caulk & Sealants',
+    'sealant': 'Caulk & Sealants',
+    'sealants': 'Caulk & Sealants',
+    'backer_rod': 'Caulk & Sealants',
 
     // Architectural Details
     'corbel': 'Architectural Details',
@@ -2361,6 +2382,7 @@ function getPresentationGroup(category?: string): string {
     'rake': 'Roofing Components',
     'ridge': 'Roofing Components',
     'valley': 'Roofing Components',
+    'ice_water_shield': 'Roofing Components',
 
     // Paint & Primer
     'paint': 'Paint & Primer',
