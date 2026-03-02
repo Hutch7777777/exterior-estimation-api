@@ -991,7 +991,7 @@ export function buildAssignedMaterialsFromPricing(
 /**
  * Check if a rule should be applied based on its trigger condition
  * Database format:
- * - { "always": true } → always trigger
+ * - { "always": true } → skip measurement-based triggers, but material/config checks still apply
  * - { "min_corners": 1 } → trigger if corners >= 1
  * - { "min_openings": 1 } → trigger if openings >= 1
  * - { "min_net_area": 500 } → trigger if net_siding_area >= 500
@@ -1000,6 +1000,11 @@ export function buildAssignedMaterialsFromPricing(
  * - { "field": "paint_service_type", "equals": "in_house" } → check config field value
  *
  * Multiple conditions use AND logic - all must match for rule to apply.
+ *
+ * IMPORTANT: Material-based conditions (material_category, sku_pattern) and config field
+ * conditions are ALWAYS checked, even when "always": true is set. This means a rule like
+ * { "always": true, "material_category": "artisan" } will only apply when an artisan
+ * material is assigned, not on every project.
  *
  * After trigger conditions pass, excludes_if_attributes is checked to potentially skip the rule.
  */
@@ -1018,184 +1023,192 @@ export function shouldApplyRule(
   // No trigger condition = always apply (but still check excludes_if_attributes)
   if (!tc) {
     matchedConditions.push('no condition');
-  }
-  // { "always": true } - mark as matched but don't return early (still check excludes_if_attributes)
-  else if (tc.always === true) {
-    matchedConditions.push('always=true');
-  }
-  // Other trigger conditions - need to evaluate each one
-  else {
+  } else {
     // =========================================================================
-    // MATERIAL-BASED TRIGGERS - Check first, fail fast if no match
+    // MATERIAL-BASED TRIGGERS - ALWAYS check these, even when always=true
+    // These filter which rules apply based on what materials are assigned.
+    // A rule with {"always": true, "material_category": "artisan"} should only
+    // apply when an artisan material is assigned, not on ALL projects.
     // =========================================================================
 
     // { "material_category": "board_batten" } - check if any assigned material has this category
     if (tc.material_category !== undefined) {
-    const requiredCategory = tc.material_category.toLowerCase();
-    const hasMatchingCategory = materials.some(
-      m => m.category?.toLowerCase() === requiredCategory
-    );
+      const requiredCategory = tc.material_category.toLowerCase();
+      const hasMatchingCategory = materials.some(
+        m => m.category?.toLowerCase() === requiredCategory
+      );
 
-    if (!hasMatchingCategory) {
-      return {
-        applies: false,
-        reason: `no material with category '${tc.material_category}'`
-      };
+      if (!hasMatchingCategory) {
+        return {
+          applies: false,
+          reason: `no material with category '${tc.material_category}'`
+        };
+      }
+      matchedConditions.push(`category=${tc.material_category}`);
     }
-    matchedConditions.push(`category=${tc.material_category}`);
-  }
 
-  // { "sku_pattern": "16OC-CP" } - check if any assigned material SKU contains this pattern
-  if (tc.sku_pattern !== undefined) {
-    const pattern = tc.sku_pattern.toLowerCase();
-    const hasMatchingSku = materials.some(
-      m => m.sku?.toLowerCase().includes(pattern)
-    );
+    // { "sku_pattern": "16OC-CP" } - check if any assigned material SKU contains this pattern
+    if (tc.sku_pattern !== undefined) {
+      const pattern = tc.sku_pattern.toLowerCase();
+      const hasMatchingSku = materials.some(
+        m => m.sku?.toLowerCase().includes(pattern)
+      );
 
-    if (!hasMatchingSku) {
-      return {
-        applies: false,
-        reason: `no material SKU matching pattern '${tc.sku_pattern}'`
-      };
+      if (!hasMatchingSku) {
+        return {
+          applies: false,
+          reason: `no material SKU matching pattern '${tc.sku_pattern}'`
+        };
+      }
+      matchedConditions.push(`sku~${tc.sku_pattern}`);
     }
-    matchedConditions.push(`sku~${tc.sku_pattern}`);
-  }
 
-  // =========================================================================
-  // CONFIG FIELD TRIGGERS - Check frontend config values
-  // Format: { "field": "paint_service_type", "equals": "in_house" }
-  // =========================================================================
+    // =========================================================================
+    // CONFIG FIELD TRIGGERS - Check frontend config values
+    // Format: { "field": "paint_service_type", "equals": "in_house" }
+    // These are also always checked regardless of "always" flag.
+    // =========================================================================
 
-  if (tc.field !== undefined && tc.equals !== undefined) {
-    const configValue = config?.[tc.field];
+    if (tc.field !== undefined && tc.equals !== undefined) {
+      const configValue = config?.[tc.field];
 
-    // String comparison (case-insensitive for flexibility)
-    const matches = typeof configValue === 'string' && typeof tc.equals === 'string'
-      ? configValue.toLowerCase() === tc.equals.toLowerCase()
-      : configValue === tc.equals;
+      // String comparison (case-insensitive for flexibility)
+      const matches = typeof configValue === 'string' && typeof tc.equals === 'string'
+        ? configValue.toLowerCase() === tc.equals.toLowerCase()
+        : configValue === tc.equals;
 
-    if (!matches) {
-      return {
-        applies: false,
-        reason: `config.${tc.field}='${configValue}' !== '${tc.equals}'`
-      };
+      if (!matches) {
+        return {
+          applies: false,
+          reason: `config.${tc.field}='${configValue}' !== '${tc.equals}'`
+        };
+      }
+      matchedConditions.push(`config.${tc.field}=${tc.equals}`);
     }
-    matchedConditions.push(`config.${tc.field}=${tc.equals}`);
-  }
 
-  // =========================================================================
-  // MEASUREMENT-BASED TRIGGERS (existing logic)
-  // =========================================================================
+    // =========================================================================
+    // "ALWAYS" FLAG CHECK
+    // If always=true, skip measurement-based triggers below but material/config
+    // checks above have already been evaluated.
+    // =========================================================================
+    if (tc.always === true) {
+      matchedConditions.push('always=true');
+      // Skip measurement-based triggers - material conditions already checked above
+    } else {
+      // =========================================================================
+      // MEASUREMENT-BASED TRIGGERS - Only check if NOT "always=true"
+      // =========================================================================
 
-  // { "min_corners": N } - check total corners
-  if (tc.min_corners !== undefined) {
-    const totalCorners = context.outside_corners_count + context.inside_corners_count;
-    if (totalCorners < tc.min_corners) {
-      return { applies: false, reason: `corners=${totalCorners} < ${tc.min_corners}` };
-    }
-    matchedConditions.push(`corners>=${tc.min_corners}`);
-  }
+      // { "min_corners": N } - check total corners
+      if (tc.min_corners !== undefined) {
+        const totalCorners = context.outside_corners_count + context.inside_corners_count;
+        if (totalCorners < tc.min_corners) {
+          return { applies: false, reason: `corners=${totalCorners} < ${tc.min_corners}` };
+        }
+        matchedConditions.push(`corners>=${tc.min_corners}`);
+      }
 
-  // { "min_openings": N } - check total openings
-  if (tc.min_openings !== undefined) {
-    if (context.openings_count < tc.min_openings) {
-      return { applies: false, reason: `openings=${context.openings_count} < ${tc.min_openings}` };
-    }
-    matchedConditions.push(`openings>=${tc.min_openings}`);
-  }
+      // { "min_openings": N } - check total openings
+      if (tc.min_openings !== undefined) {
+        if (context.openings_count < tc.min_openings) {
+          return { applies: false, reason: `openings=${context.openings_count} < ${tc.min_openings}` };
+        }
+        matchedConditions.push(`openings>=${tc.min_openings}`);
+      }
 
-  // { "min_net_area": N } - check net siding area
-  if (tc.min_net_area !== undefined) {
-    if (context.net_siding_area_sqft < tc.min_net_area) {
-      return { applies: false, reason: `net_area=${context.net_siding_area_sqft} < ${tc.min_net_area}` };
-    }
-    matchedConditions.push(`net_area>=${tc.min_net_area}`);
-  }
+      // { "min_net_area": N } - check net siding area
+      if (tc.min_net_area !== undefined) {
+        if (context.net_siding_area_sqft < tc.min_net_area) {
+          return { applies: false, reason: `net_area=${context.net_siding_area_sqft} < ${tc.min_net_area}` };
+        }
+        matchedConditions.push(`net_area>=${tc.min_net_area}`);
+      }
 
-  // { "min_facade_area": N } - check facade area
-  if (tc.min_facade_area !== undefined) {
-    if (context.facade_area_sqft < tc.min_facade_area) {
-      return { applies: false, reason: `facade_area=${context.facade_area_sqft} < ${tc.min_facade_area}` };
-    }
-    matchedConditions.push(`facade_area>=${tc.min_facade_area}`);
-  }
+      // { "min_facade_area": N } - check facade area
+      if (tc.min_facade_area !== undefined) {
+        if (context.facade_area_sqft < tc.min_facade_area) {
+          return { applies: false, reason: `facade_area=${context.facade_area_sqft} < ${tc.min_facade_area}` };
+        }
+        matchedConditions.push(`facade_area>=${tc.min_facade_area}`);
+      }
 
-  // { "min_belly_band_lf": N } - check belly band linear feet
-  if (tc.min_belly_band_lf !== undefined) {
-    if (context.belly_band_lf < tc.min_belly_band_lf) {
-      return { applies: false, reason: `belly_band_lf=${context.belly_band_lf} < ${tc.min_belly_band_lf}` };
-    }
-    matchedConditions.push(`belly_band>=${tc.min_belly_band_lf}`);
-  }
+      // { "min_belly_band_lf": N } - check belly band linear feet
+      if (tc.min_belly_band_lf !== undefined) {
+        if (context.belly_band_lf < tc.min_belly_band_lf) {
+          return { applies: false, reason: `belly_band_lf=${context.belly_band_lf} < ${tc.min_belly_band_lf}` };
+        }
+        matchedConditions.push(`belly_band>=${tc.min_belly_band_lf}`);
+      }
 
-  // =========================================================================
-  // TRIM TRIGGERS - Check trim linear feet conditions
-  // =========================================================================
+      // =========================================================================
+      // TRIM TRIGGERS - Check trim linear feet conditions
+      // =========================================================================
 
-  // { "min_trim_total_lf": N } - check total trim linear feet (>= comparison)
-  if (tc.min_trim_total_lf !== undefined) {
-    if (context.trim_total_lf < tc.min_trim_total_lf) {
-      return { applies: false, reason: `trim_total_lf=${context.trim_total_lf} < ${tc.min_trim_total_lf}` };
-    }
-    matchedConditions.push(`trim_total>=${tc.min_trim_total_lf}`);
-  }
+      // { "min_trim_total_lf": N } - check total trim linear feet (>= comparison)
+      if (tc.min_trim_total_lf !== undefined) {
+        if (context.trim_total_lf < tc.min_trim_total_lf) {
+          return { applies: false, reason: `trim_total_lf=${context.trim_total_lf} < ${tc.min_trim_total_lf}` };
+        }
+        matchedConditions.push(`trim_total>=${tc.min_trim_total_lf}`);
+      }
 
-  // { "trim_total_lf_gt": N } - check total trim linear feet (> comparison, alternative syntax)
-  if (tc.trim_total_lf_gt !== undefined) {
-    if (context.trim_total_lf <= tc.trim_total_lf_gt) {
-      return { applies: false, reason: `trim_total_lf=${context.trim_total_lf} <= ${tc.trim_total_lf_gt}` };
-    }
-    matchedConditions.push(`trim_total>${tc.trim_total_lf_gt}`);
-  }
+      // { "trim_total_lf_gt": N } - check total trim linear feet (> comparison, alternative syntax)
+      if (tc.trim_total_lf_gt !== undefined) {
+        if (context.trim_total_lf <= tc.trim_total_lf_gt) {
+          return { applies: false, reason: `trim_total_lf=${context.trim_total_lf} <= ${tc.trim_total_lf_gt}` };
+        }
+        matchedConditions.push(`trim_total>${tc.trim_total_lf_gt}`);
+      }
 
-  // { "min_trim_head_lf": N } - check head trim linear feet
-  if (tc.min_trim_head_lf !== undefined) {
-    if (context.trim_head_lf < tc.min_trim_head_lf) {
-      return { applies: false, reason: `trim_head_lf=${context.trim_head_lf} < ${tc.min_trim_head_lf}` };
-    }
-    matchedConditions.push(`trim_head>=${tc.min_trim_head_lf}`);
-  }
+      // { "min_trim_head_lf": N } - check head trim linear feet
+      if (tc.min_trim_head_lf !== undefined) {
+        if (context.trim_head_lf < tc.min_trim_head_lf) {
+          return { applies: false, reason: `trim_head_lf=${context.trim_head_lf} < ${tc.min_trim_head_lf}` };
+        }
+        matchedConditions.push(`trim_head>=${tc.min_trim_head_lf}`);
+      }
 
-  // { "trim_head_lf_gt": N } - check head trim linear feet (> comparison)
-  if (tc.trim_head_lf_gt !== undefined) {
-    if (context.trim_head_lf <= tc.trim_head_lf_gt) {
-      return { applies: false, reason: `trim_head_lf=${context.trim_head_lf} <= ${tc.trim_head_lf_gt}` };
-    }
-    matchedConditions.push(`trim_head>${tc.trim_head_lf_gt}`);
-  }
+      // { "trim_head_lf_gt": N } - check head trim linear feet (> comparison)
+      if (tc.trim_head_lf_gt !== undefined) {
+        if (context.trim_head_lf <= tc.trim_head_lf_gt) {
+          return { applies: false, reason: `trim_head_lf=${context.trim_head_lf} <= ${tc.trim_head_lf_gt}` };
+        }
+        matchedConditions.push(`trim_head>${tc.trim_head_lf_gt}`);
+      }
 
-  // { "min_trim_jamb_lf": N } - check jamb trim linear feet
-  if (tc.min_trim_jamb_lf !== undefined) {
-    if (context.trim_jamb_lf < tc.min_trim_jamb_lf) {
-      return { applies: false, reason: `trim_jamb_lf=${context.trim_jamb_lf} < ${tc.min_trim_jamb_lf}` };
-    }
-    matchedConditions.push(`trim_jamb>=${tc.min_trim_jamb_lf}`);
-  }
+      // { "min_trim_jamb_lf": N } - check jamb trim linear feet
+      if (tc.min_trim_jamb_lf !== undefined) {
+        if (context.trim_jamb_lf < tc.min_trim_jamb_lf) {
+          return { applies: false, reason: `trim_jamb_lf=${context.trim_jamb_lf} < ${tc.min_trim_jamb_lf}` };
+        }
+        matchedConditions.push(`trim_jamb>=${tc.min_trim_jamb_lf}`);
+      }
 
-  // { "trim_jamb_lf_gt": N } - check jamb trim linear feet (> comparison)
-  if (tc.trim_jamb_lf_gt !== undefined) {
-    if (context.trim_jamb_lf <= tc.trim_jamb_lf_gt) {
-      return { applies: false, reason: `trim_jamb_lf=${context.trim_jamb_lf} <= ${tc.trim_jamb_lf_gt}` };
-    }
-    matchedConditions.push(`trim_jamb>${tc.trim_jamb_lf_gt}`);
-  }
+      // { "trim_jamb_lf_gt": N } - check jamb trim linear feet (> comparison)
+      if (tc.trim_jamb_lf_gt !== undefined) {
+        if (context.trim_jamb_lf <= tc.trim_jamb_lf_gt) {
+          return { applies: false, reason: `trim_jamb_lf=${context.trim_jamb_lf} <= ${tc.trim_jamb_lf_gt}` };
+        }
+        matchedConditions.push(`trim_jamb>${tc.trim_jamb_lf_gt}`);
+      }
 
-  // { "min_trim_sill_lf": N } - check sill trim linear feet
-  if (tc.min_trim_sill_lf !== undefined) {
-    if (context.trim_sill_lf < tc.min_trim_sill_lf) {
-      return { applies: false, reason: `trim_sill_lf=${context.trim_sill_lf} < ${tc.min_trim_sill_lf}` };
-    }
-    matchedConditions.push(`trim_sill>=${tc.min_trim_sill_lf}`);
-  }
+      // { "min_trim_sill_lf": N } - check sill trim linear feet
+      if (tc.min_trim_sill_lf !== undefined) {
+        if (context.trim_sill_lf < tc.min_trim_sill_lf) {
+          return { applies: false, reason: `trim_sill_lf=${context.trim_sill_lf} < ${tc.min_trim_sill_lf}` };
+        }
+        matchedConditions.push(`trim_sill>=${tc.min_trim_sill_lf}`);
+      }
 
-  // { "trim_sill_lf_gt": N } - check sill trim linear feet (> comparison)
-  if (tc.trim_sill_lf_gt !== undefined) {
-    if (context.trim_sill_lf <= tc.trim_sill_lf_gt) {
-      return { applies: false, reason: `trim_sill_lf=${context.trim_sill_lf} <= ${tc.trim_sill_lf_gt}` };
-    }
-    matchedConditions.push(`trim_sill>${tc.trim_sill_lf_gt}`);
-  }
-  } // End of else block for trigger condition evaluation
+      // { "trim_sill_lf_gt": N } - check sill trim linear feet (> comparison)
+      if (tc.trim_sill_lf_gt !== undefined) {
+        if (context.trim_sill_lf <= tc.trim_sill_lf_gt) {
+          return { applies: false, reason: `trim_sill_lf=${context.trim_sill_lf} <= ${tc.trim_sill_lf_gt}` };
+        }
+        matchedConditions.push(`trim_sill>${tc.trim_sill_lf_gt}`);
+      }
+    } // End of measurement-based triggers (when not always=true)
+  } // End of trigger condition evaluation
 
   // =========================================================================
   // All trigger conditions passed - now check exclusions
