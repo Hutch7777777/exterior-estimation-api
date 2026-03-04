@@ -16,6 +16,7 @@ import {
 } from './autoscope-v2';
 import { AutoScopeLineItem } from '../../types/autoscope';
 import { getSupabaseClient, isDatabaseConfigured } from '../../services/database';
+import { getCalculationConstants } from '../../services/configService';
 
 // ============================================================================
 // TYPES
@@ -775,6 +776,18 @@ export async function calculateWithAutoScopeV2(
   // Config fields from frontend (for paint service, etc.)
   config?: Record<string, any>
 ): Promise<V2CalculationResult> {
+  // =========================================================================
+  // Phase 5: Load constants from database (cached 5 min, falls back to hardcoded)
+  // =========================================================================
+  const dbConstants = await getCalculationConstants('siding');
+  const CALC_MARKUP_RATE = dbConstants.markup_rate;
+  const CALC_SOC_UNEMPLOYMENT_RATE = dbConstants.soc_unemployment_rate;
+  const CALC_LI_HOURLY_RATE = dbConstants.li_hourly_rate;
+  const CALC_INSURANCE_RATE_PER_THOUSAND = dbConstants.insurance_rate_per_thousand;
+  const CALC_CREW_SIZE = dbConstants.default_crew_size;
+  const CALC_ESTIMATED_WEEKS = dbConstants.default_estimated_weeks;
+  console.log(`📋 Constants from DB: markup=${CALC_MARKUP_RATE}, L&I=${CALC_SOC_UNEMPLOYMENT_RATE}, insurance=$${CALC_INSURANCE_RATE_PER_THOUSAND}/1000`);
+
   // =========================================================================
   // DEBUG: Log ALL incoming parameters at function entry
   // =========================================================================
@@ -2066,14 +2079,16 @@ export async function calculateWithAutoScopeV2(
   // Calculate overhead costs (without project insurance - that's added after markup calculation)
   const { overheadItems, subtotal: overheadSubtotal } = calculateOverhead(
     sidingOverheadCosts,
-    laborSubtotal
+    laborSubtotal,
+    { crew_size: CALC_CREW_SIZE, estimated_weeks: CALC_ESTIMATED_WEEKS }
   );
 
   // Calculate final totals with markup
   const projectTotals = calculateProjectTotals(
     materialTotal,
     laborSubtotal,
-    overheadSubtotal
+    overheadSubtotal,
+    CALC_MARKUP_RATE
   );
 
   // =========================================================================
@@ -2093,7 +2108,7 @@ export async function calculateWithAutoScopeV2(
       rate: projectTotals.project_insurance,
       amount: projectTotals.project_insurance,
       calculation_type: 'calculated',
-      notes: `$${INSURANCE_RATE_PER_THOUSAND.toFixed(2)} per $1,000 of project subtotal ($${projectTotals.subtotal.toFixed(2)})`
+      notes: `$${CALC_INSURANCE_RATE_PER_THOUSAND.toFixed(2)} per $1,000 of project subtotal ($${projectTotals.subtotal.toFixed(2)})`
     });
     console.log(`   📊 Project Insurance: $${projectTotals.project_insurance.toFixed(2)} (added to overhead items)`);
   }
@@ -2141,9 +2156,9 @@ export async function calculateWithAutoScopeV2(
       measurement_source: autoScopeResult.measurement_source,
       rules_evaluated: autoScopeResult.rules_evaluated,
       rules_triggered: autoScopeResult.rules_triggered,
-      markup_rate: MARKUP_RATE,
-      crew_size: DEFAULT_CREW_SIZE,
-      estimated_weeks: DEFAULT_ESTIMATED_WEEKS,
+      markup_rate: CALC_MARKUP_RATE,
+      crew_size: CALC_CREW_SIZE,
+      estimated_weeks: CALC_ESTIMATED_WEEKS,
       warnings,
     },
   };
