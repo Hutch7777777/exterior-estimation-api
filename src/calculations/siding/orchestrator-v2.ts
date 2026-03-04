@@ -14,7 +14,7 @@ import {
   buildManufacturerGroups,
   buildAssignedMaterialsFromPricing,
 } from './autoscope-v2';
-import { AutoScopeLineItem } from '../../types/autoscope';
+import { AutoScopeLineItem, MaterialCategoryAreas } from '../../types/autoscope';
 import { getSupabaseClient, isDatabaseConfigured } from '../../services/database';
 import { getCalculationConstants } from '../../services/configService';
 
@@ -1262,6 +1262,49 @@ export async function calculateWithAutoScopeV2(
     }
   }
 
+  // =========================================================================
+  // BUILD MATERIAL CATEGORY AREAS for scoped auto-scope rules
+  // When a rule has material_category in trigger_condition (e.g., board_batten),
+  // it should use only that category's assigned area, not the global facade.
+  // Fixes: B&B and Artisan rules over-counting when only partial coverage assigned.
+  // =========================================================================
+  const materialCategoryAreas: MaterialCategoryAreas = {};
+
+  if (materialAssignments && materialAssignments.length > 0) {
+    // We already have pricingMapForAutoScope from above
+    const pricingIds = materialAssignments.map(m => m.pricing_item_id);
+    const pricingMapForCategories = await getPricingByIds(pricingIds, organizationId);
+
+    for (const assignment of materialAssignments) {
+      const pricing = pricingMapForCategories.get(assignment.pricing_item_id);
+      if (!pricing?.category) continue;
+
+      const category = pricing.category.toLowerCase();
+      const quantity = assignment.quantity || 0;
+      const unit = assignment.unit?.toUpperCase() || '';
+
+      // Only count SF assignments for area-based rules
+      if (unit === 'SF' && quantity > 0) {
+        if (!materialCategoryAreas[category]) {
+          materialCategoryAreas[category] = { total_area_sqft: 0, material_ids: [] };
+        }
+        materialCategoryAreas[category].total_area_sqft += quantity;
+        if (!materialCategoryAreas[category].material_ids.includes(assignment.pricing_item_id)) {
+          materialCategoryAreas[category].material_ids.push(assignment.pricing_item_id);
+        }
+      }
+    }
+
+    // Log category areas for debugging
+    const categoryNames = Object.keys(materialCategoryAreas);
+    if (categoryNames.length > 0) {
+      console.log(`📐 Material category areas for scoped auto-scope rules:`);
+      for (const [cat, data] of Object.entries(materialCategoryAreas)) {
+        console.log(`   - ${cat}: ${data.total_area_sqft.toFixed(0)} SF (${data.material_ids.length} material(s))`);
+      }
+    }
+  }
+
   const autoScopeResult = await generateAutoScopeItemsV2(
     extractionId,
     enrichedMeasurements,
@@ -1270,6 +1313,7 @@ export async function calculateWithAutoScopeV2(
       skipSidingPanels: hasSidingAssignments,
       manufacturerGroups,  // Pass manufacturer groups for per-manufacturer rules
       assignedMaterials: assignedMaterialsForAutoScope,  // Pass assigned materials for category-based rules
+      materialCategoryAreas,  // Pass category areas for scoped rules (B&B, Artisan fix)
       // V8.0: Pass spatial containment metadata for logging/diagnostics
       spatialContainment: spatialContainment,
       // Pass config for trigger_condition field checks (e.g., paint_service_type)

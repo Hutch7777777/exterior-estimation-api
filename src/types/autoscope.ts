@@ -226,6 +226,28 @@ export interface AutoScopeV2Options {
   // Config field values from webhook (for trigger_condition checks)
   /** Config values like paint_service_type, paint_coats, etc. */
   config?: Record<string, any>;
+
+  /**
+   * Per-material-category area totals for category-scoped auto-scope rules
+   * When a rule has material_category in trigger_condition (e.g., board_batten, artisan),
+   * use this category's area instead of global facade_sqft.
+   * Fixes: B&B/Artisan rules using global area when only partial coverage assigned.
+   */
+  materialCategoryAreas?: MaterialCategoryAreas;
+}
+
+/**
+ * Maps material categories to their assigned areas
+ * Used for rules with material_category in trigger_condition
+ * Example: { "board_batten": { total_area_sqft: 151, material_ids: ["uuid1"] } }
+ */
+export interface MaterialCategoryAreas {
+  [category: string]: {
+    /** Total square footage assigned to this material category */
+    total_area_sqft: number;
+    /** List of pricing_item_ids that contributed to this total */
+    material_ids: string[];
+  };
 }
 
 // ============================================================================

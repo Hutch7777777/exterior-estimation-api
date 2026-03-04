@@ -20,7 +20,8 @@ import {
   CadHoverMeasurements,
   ManufacturerGroups,
   ManufacturerMeasurements,
-  AssignedMaterial
+  AssignedMaterial,
+  MaterialCategoryAreas
 } from '../../types/autoscope';
 import { PerMaterialMeasurements } from '../../types/webhook';
 // PricingItem type used indirectly via getPricingByIds return type
@@ -1465,6 +1466,7 @@ export async function generateAutoScopeItemsV2(
   const manufacturerGroups = options?.manufacturerGroups || {};
   const manufacturerNames = Object.keys(manufacturerGroups);
   const assignedMaterials = options?.assignedMaterials || [];
+  const materialCategoryAreas = options?.materialCategoryAreas || {};
 
   // 1. Build measurement context (total project measurements)
   let dbMeasurements: CadHoverMeasurements | null = null;
@@ -1536,11 +1538,29 @@ export async function generateAutoScopeItemsV2(
     if (!hasManufacturerFilter) {
       // =====================================================================
       // GENERIC RULE: Apply to total project measurements
+      // But if rule has material_category in trigger_condition, scope to that category's area
       // =====================================================================
       const { applies, reason } = shouldApplyRule(rule, totalContext, assignedMaterials, options?.config);
 
       if (applies) {
-        const { result: quantity, error } = evaluateFormula(rule.quantity_formula, totalContext);
+        // Check if this rule targets a specific material_category
+        // If so, use the category's assigned area instead of global facade
+        let evalContext = totalContext;
+        const triggerCategory = rule.trigger_condition?.material_category?.toLowerCase();
+
+        if (triggerCategory && materialCategoryAreas[triggerCategory]) {
+          const categoryArea = materialCategoryAreas[triggerCategory].total_area_sqft;
+          evalContext = {
+            ...totalContext,
+            facade_sqft: categoryArea,
+            facade_area_sqft: categoryArea,
+            gross_wall_area_sqft: categoryArea,
+            net_siding_area_sqft: categoryArea,
+          };
+          console.log(`  📐 Rule ${rule.rule_id}: Scoped to ${triggerCategory} category: facade_sqft=${categoryArea.toFixed(0)} SF (global was ${totalContext.facade_area_sqft.toFixed(0)} SF)`);
+        }
+
+        const { result: quantity, error } = evaluateFormula(rule.quantity_formula, evalContext);
 
         if (error) {
           console.warn(`⚠️ Rule ${rule.rule_id} (${rule.rule_name}): Formula error - ${error}`);
@@ -1549,9 +1569,12 @@ export async function generateAutoScopeItemsV2(
         }
 
         if (quantity > 0) {
-          triggeredRules.push({ rule, quantity, manufacturer: undefined, context: totalContext });
+          triggeredRules.push({ rule, quantity, manufacturer: undefined, context: evalContext });
           result.rules_triggered++;
-          console.log(`  ✓ Rule ${rule.rule_id}: ${rule.rule_name} [GENERIC: ${totalContext.facade_area_sqft.toFixed(0)} SF] → ${Math.ceil(quantity)} ${rule.unit} (${reason})`);
+          const scopeLabel = triggerCategory && materialCategoryAreas[triggerCategory]
+            ? `SCOPED ${triggerCategory.toUpperCase()}: ${evalContext.facade_area_sqft.toFixed(0)} SF`
+            : `GENERIC: ${totalContext.facade_area_sqft.toFixed(0)} SF`;
+          console.log(`  ✓ Rule ${rule.rule_id}: ${rule.rule_name} [${scopeLabel}] → ${Math.ceil(quantity)} ${rule.unit} (${reason})`);
         } else {
           result.rules_skipped.push(`${rule.material_sku}: quantity=0`);
           console.log(`  ○ Rule ${rule.rule_id}: ${rule.rule_name} → 0 (formula returned 0)`);
