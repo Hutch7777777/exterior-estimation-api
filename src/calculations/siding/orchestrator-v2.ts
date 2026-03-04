@@ -1257,10 +1257,7 @@ export async function calculateWithAutoScopeV2(
       pricingMapForAutoScope
     );
 
-    console.log(`🎨 [Artisan Debug] Built ${assignedMaterialsForAutoScope.length} assigned materials for auto-scope:`);
-    for (const m of assignedMaterialsForAutoScope) {
-      console.log(`   - SKU: ${m.sku}, Category: ${m.category}, Manufacturer: ${m.manufacturer}`);
-    }
+    // Verbose per-material logging removed to reduce log volume
 
     // =========================================================================
     // BUILD MATERIAL CATEGORY AREAS for scoped auto-scope rules
@@ -1292,14 +1289,8 @@ export async function calculateWithAutoScopeV2(
       }
     }
 
-    // Log category areas for debugging
-    const categoryNames = Object.keys(materialCategoryAreas);
-    if (categoryNames.length > 0) {
-      console.log(`📐 Material category areas for scoped auto-scope rules (from pricing_items.category):`);
-      for (const [cat, data] of Object.entries(materialCategoryAreas)) {
-        console.log(`   - ${cat}: ${data.total_area_sqft.toFixed(0)} SF (${data.material_ids.length} material(s))`);
-      }
-    }
+    // Single targeted debug log for category areas
+    console.log(`🎯 CATEGORY_AREAS_DEBUG: ${JSON.stringify(materialCategoryAreas)}`);
   }
 
   const autoScopeResult = await generateAutoScopeItemsV2(

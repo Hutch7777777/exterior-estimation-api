@@ -1547,6 +1547,7 @@ export async function generateAutoScopeItemsV2(
         // If so, use the category's assigned area instead of global facade
         let evalContext = totalContext;
         const triggerCategory = rule.trigger_condition?.material_category?.toLowerCase();
+        console.log(`🎯 SCOPE_DEBUG rule=${rule.rule_id} triggerCat=${triggerCategory} hasArea=${!!materialCategoryAreas[triggerCategory || '']} keys=${Object.keys(materialCategoryAreas)}`);
 
         if (triggerCategory && materialCategoryAreas[triggerCategory]) {
           const categoryArea = materialCategoryAreas[triggerCategory].total_area_sqft;
@@ -1557,7 +1558,7 @@ export async function generateAutoScopeItemsV2(
             gross_wall_area_sqft: categoryArea,
             net_siding_area_sqft: categoryArea,
           };
-          console.log(`  📐 Rule ${rule.rule_id}: Scoped to ${triggerCategory} category: facade_sqft=${categoryArea.toFixed(0)} SF (global was ${totalContext.facade_area_sqft.toFixed(0)} SF)`);
+          // Verbose scoping log removed to reduce log volume
         }
 
         const { result: quantity, error } = evaluateFormula(rule.quantity_formula, evalContext);
@@ -1571,10 +1572,7 @@ export async function generateAutoScopeItemsV2(
         if (quantity > 0) {
           triggeredRules.push({ rule, quantity, manufacturer: undefined, context: evalContext });
           result.rules_triggered++;
-          const scopeLabel = triggerCategory && materialCategoryAreas[triggerCategory]
-            ? `SCOPED ${triggerCategory.toUpperCase()}: ${evalContext.facade_area_sqft.toFixed(0)} SF`
-            : `GENERIC: ${totalContext.facade_area_sqft.toFixed(0)} SF`;
-          console.log(`  ✓ Rule ${rule.rule_id}: ${rule.rule_name} [${scopeLabel}] → ${Math.ceil(quantity)} ${rule.unit} (${reason})`);
+          // Verbose per-rule logging removed to reduce log volume
         } else {
           result.rules_skipped.push(`${rule.material_sku}: quantity=0`);
           console.log(`  ○ Rule ${rule.rule_id}: ${rule.rule_name} → 0 (formula returned 0)`);
