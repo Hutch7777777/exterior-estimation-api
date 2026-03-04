@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import sidingRoutes from './routes/siding';
 import webhookRoutes from './routes/webhook';
+import spatialRoutes from './routes/spatial';
 import { isDatabaseConfigured, testConnection } from './services/database';
 
 dotenv.config();
@@ -34,6 +35,9 @@ app.use('/api/v1/siding', sidingRoutes);
 // Webhook routes (Phase 4 - n8n compatible)
 app.use('/webhook', webhookRoutes);
 
+// Spatial containment routes (Phase 3 - replaces n8n Transform CAD node)
+app.use(spatialRoutes);
+
 async function startServer() {
   // Check database status
   const dbConfigured = isDatabaseConfigured();
@@ -63,6 +67,7 @@ async function startServer() {
     console.log('');
     console.log('🔗 n8n Webhook Endpoints:');
     console.log(`   Siding:       POST http://localhost:${PORT}/webhook/siding-estimator`);
+    console.log(`   Spatial:      POST http://localhost:${PORT}/webhook/spatial-containment`);
     console.log(`   Test:         POST http://localhost:${PORT}/webhook/test`);
     console.log(`   Health:       GET  http://localhost:${PORT}/webhook/health`);
   });
