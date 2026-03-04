@@ -1611,6 +1611,16 @@ export async function generateAutoScopeItemsV2(
         // Build manufacturer-specific context
         const mfrContext = buildManufacturerContext(totalContext, mfrData);
 
+        // Scope to material category area if rule specifies one (e.g., board_batten = 151 SF vs full manufacturer area)
+        const triggerCategory = rule.trigger_condition?.material_category;
+        if (triggerCategory && materialCategoryAreas?.[triggerCategory]) {
+          const categoryArea = materialCategoryAreas[triggerCategory].total_area_sqft;
+          mfrContext.facade_sqft = categoryArea;
+          mfrContext.facade_area_sqft = categoryArea;
+          mfrContext.gross_wall_area_sqft = categoryArea;
+          mfrContext.net_siding_area_sqft = categoryArea;
+        }
+
         const { applies, reason } = shouldApplyRule(rule, mfrContext, assignedMaterials, options?.config);
 
         if (applies) {
