@@ -1239,6 +1239,7 @@ export async function calculateWithAutoScopeV2(
   // This enables material_category-based auto-scope rules (e.g., Artisan)
   // =========================================================================
   let assignedMaterialsForAutoScope: { sku: string; category: string; manufacturer: string; pricing_item_id?: string }[] = [];
+  const materialCategoryAreas: MaterialCategoryAreas = {};
 
   if (materialAssignments && materialAssignments.length > 0) {
     // Fetch pricing for all assigned materials to get categories
@@ -1260,37 +1261,33 @@ export async function calculateWithAutoScopeV2(
     for (const m of assignedMaterialsForAutoScope) {
       console.log(`   - SKU: ${m.sku}, Category: ${m.category}, Manufacturer: ${m.manufacturer}`);
     }
-  }
 
-  // =========================================================================
-  // BUILD MATERIAL CATEGORY AREAS for scoped auto-scope rules
-  // When a rule has material_category in trigger_condition (e.g., board_batten),
-  // it should use only that category's assigned area, not the global facade.
-  // Fixes: B&B and Artisan rules over-counting when only partial coverage assigned.
-  // =========================================================================
-  const materialCategoryAreas: MaterialCategoryAreas = {};
-
-  if (materialAssignments && materialAssignments.length > 0) {
-    // We already have pricingMapForAutoScope from above
-    const pricingIds = materialAssignments.map(m => m.pricing_item_id);
-    const pricingMapForCategories = await getPricingByIds(pricingIds, organizationId);
-
+    // =========================================================================
+    // BUILD MATERIAL CATEGORY AREAS for scoped auto-scope rules
+    // When a rule has material_category in trigger_condition (e.g., board_batten),
+    // it should use only that category's assigned area, not the global facade.
+    // Fixes: B&B and Artisan rules over-counting when only partial coverage assigned.
+    // IMPORTANT: Use pricing.category from pricing_items (e.g., "board_batten"),
+    // NOT the detection_class material_category from assigned_products.
+    // =========================================================================
     for (const assignment of materialAssignments) {
-      const pricing = pricingMapForCategories.get(assignment.pricing_item_id);
+      // Reuse the pricing lookup we already did above
+      const pricing = pricingMapForAutoScope.get(assignment.pricing_item_id);
       if (!pricing?.category) continue;
 
-      const category = pricing.category.toLowerCase();
+      // Use the PRODUCT category from pricing_items (e.g., "board_batten")
+      const productCategory = pricing.category.toLowerCase();
       const quantity = assignment.quantity || 0;
       const unit = assignment.unit?.toUpperCase() || '';
 
       // Only count SF assignments for area-based rules
       if (unit === 'SF' && quantity > 0) {
-        if (!materialCategoryAreas[category]) {
-          materialCategoryAreas[category] = { total_area_sqft: 0, material_ids: [] };
+        if (!materialCategoryAreas[productCategory]) {
+          materialCategoryAreas[productCategory] = { total_area_sqft: 0, material_ids: [] };
         }
-        materialCategoryAreas[category].total_area_sqft += quantity;
-        if (!materialCategoryAreas[category].material_ids.includes(assignment.pricing_item_id)) {
-          materialCategoryAreas[category].material_ids.push(assignment.pricing_item_id);
+        materialCategoryAreas[productCategory].total_area_sqft += quantity;
+        if (!materialCategoryAreas[productCategory].material_ids.includes(assignment.pricing_item_id)) {
+          materialCategoryAreas[productCategory].material_ids.push(assignment.pricing_item_id);
         }
       }
     }
@@ -1298,7 +1295,7 @@ export async function calculateWithAutoScopeV2(
     // Log category areas for debugging
     const categoryNames = Object.keys(materialCategoryAreas);
     if (categoryNames.length > 0) {
-      console.log(`📐 Material category areas for scoped auto-scope rules:`);
+      console.log(`📐 Material category areas for scoped auto-scope rules (from pricing_items.category):`);
       for (const [cat, data] of Object.entries(materialCategoryAreas)) {
         console.log(`   - ${cat}: ${data.total_area_sqft.toFixed(0)} SF (${data.material_ids.length} material(s))`);
       }
