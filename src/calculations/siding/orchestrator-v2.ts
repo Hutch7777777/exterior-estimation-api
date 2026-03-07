@@ -647,6 +647,7 @@ function calculateOverhead(
   console.log(`   Crew size: ${crewSize}, Estimated weeks: ${estimatedWeeks}`);
   console.log(`   L&I Rate: $${liHourlyRate}/hr ${orgConfig?.li_hourly_rate ? '(from org config)' : '(default)'}`);
   console.log(`   Include Dumpster: ${includeDumpster}, Include Toilet: ${includeToilet}`);
+  console.log(`   [DEBUG] orgConfig?.include_toilet raw value: ${JSON.stringify(orgConfig?.include_toilet)} (type: ${typeof orgConfig?.include_toilet})`);
   console.log(`   Installation labor subtotal: $${installationLaborSubtotal.toFixed(2)}`);
 
   const overheadItems: OverheadLineItem[] = [];
@@ -677,6 +678,7 @@ function calculateOverhead(
                          costNameLower.includes('potty') ||
                          costNameLower.includes('sanitation') ||
                          costNameLower.includes('restroom');
+    console.log(`   [DEBUG] Processing "${cost.cost_name}" - isToiletItem: ${isToiletItem}, includeToilet: ${includeToilet}, shouldSkip: ${isToiletItem && !includeToilet}`);
     if (isToiletItem && !includeToilet) {
       console.log(`   ⏭️ Skipping ${cost.cost_name} (org config: include_toilet=false)`);
       continue;
