@@ -130,6 +130,21 @@ const INSURANCE_RATE_PER_THOUSAND = 24.38;
 const DEFAULT_CREW_SIZE = 4;
 const DEFAULT_ESTIMATED_WEEKS = 2;
 
+// Organization-specific overhead config (from organizations.settings.overhead_config)
+interface OrgOverheadConfig {
+  crew_size?: number;
+  estimated_weeks?: number;
+  li_hourly_rate?: number;
+  insurance_rate_per_thousand?: number;
+  include_dumpster?: boolean;
+  dumpster_rate?: number;
+  include_toilet?: boolean;
+  toilet_rate?: number;
+  mobilization_total?: number;
+  mobilization_type?: string;
+  mobilization_note?: string;
+}
+
 export interface CombinedLineItem {
   description: string;
   sku: string;
@@ -608,19 +623,29 @@ function calculateInstallationLaborLegacy(
 
 /**
  * Calculate overhead costs based on Mike Skjei methodology
+ * V9.1: Now supports org-specific overhead config from organizations.settings.overhead_config
  */
 function calculateOverhead(
   overheadCosts: OverheadCost[],
   installationLaborSubtotal: number,
-  config: { crew_size?: number; estimated_weeks?: number } = {}
+  config: { crew_size?: number; estimated_weeks?: number } = {},
+  orgConfig: OrgOverheadConfig | null = null
 ): { overheadItems: OverheadLineItem[], subtotal: number } {
 
   console.log('🏗️ Calculating overhead costs...');
 
-  const crewSize = config.crew_size || DEFAULT_CREW_SIZE;
-  const estimatedWeeks = config.estimated_weeks || DEFAULT_ESTIMATED_WEEKS;
+  // Use org config values with fallbacks to defaults
+  const crewSize = orgConfig?.crew_size ?? config.crew_size ?? DEFAULT_CREW_SIZE;
+  const estimatedWeeks = orgConfig?.estimated_weeks ?? config.estimated_weeks ?? DEFAULT_ESTIMATED_WEEKS;
+  const liHourlyRate = orgConfig?.li_hourly_rate ?? LI_HOURLY_RATE;
+  const includeDumpster = orgConfig?.include_dumpster ?? true;
+  const includeToilet = orgConfig?.include_toilet ?? true;
+  const mobilizationTotal = orgConfig?.mobilization_total;
+  const mobilizationNote = orgConfig?.mobilization_note;
 
   console.log(`   Crew size: ${crewSize}, Estimated weeks: ${estimatedWeeks}`);
+  console.log(`   L&I Rate: $${liHourlyRate}/hr ${orgConfig?.li_hourly_rate ? '(from org config)' : '(default)'}`);
+  console.log(`   Include Dumpster: ${includeDumpster}, Include Toilet: ${includeToilet}`);
   console.log(`   Installation labor subtotal: $${installationLaborSubtotal.toFixed(2)}`);
 
   const overheadItems: OverheadLineItem[] = [];
@@ -630,44 +655,66 @@ function calculateOverhead(
     let amount = 0;
     let quantity: number | undefined;
     let rate: number | undefined;
+    let notes: string | undefined = cost.notes;
 
     if (cost.cost_name === 'Project Insurance') {
       console.log(`   ⏭️ Skipping ${cost.cost_name} (calculated at end)`);
       continue;
     }
 
-    switch (cost.cost_type) {
-      case 'percentage':
-        if (cost.calculation_formula?.includes('0.1265')) {
-          rate = SOC_UNEMPLOYMENT_RATE;
-          amount = installationLaborSubtotal * rate;
-          console.log(`   📊 ${cost.cost_name}: ${(rate * 100).toFixed(2)}% × $${installationLaborSubtotal.toFixed(2)} = $${amount.toFixed(2)}`);
-        }
-        break;
+    // V9.1: Skip dumpster if org config excludes it
+    if (cost.cost_name.toLowerCase().includes('dumpster') && !includeDumpster) {
+      console.log(`   ⏭️ Skipping ${cost.cost_name} (org config: include_dumpster=false)`);
+      continue;
+    }
 
-      case 'calculated':
-        if (cost.calculation_formula?.includes('crew_size')) {
-          const hours = crewSize * estimatedWeeks * 40;
-          rate = LI_HOURLY_RATE;
-          amount = hours * rate;
-          quantity = hours;
-          console.log(`   📊 ${cost.cost_name}: ${hours} hrs × $${rate}/hr = $${amount.toFixed(2)}`);
-        }
-        break;
+    // V9.1: Skip toilet if org config excludes it
+    if (cost.cost_name.toLowerCase().includes('toilet') && !includeToilet) {
+      console.log(`   ⏭️ Skipping ${cost.cost_name} (org config: include_toilet=false)`);
+      continue;
+    }
 
-      case 'flat_fee':
-        quantity = parseFloat(cost.default_quantity) || 1;
-        rate = parseFloat(cost.base_rate || '0');
-        amount = quantity * rate;
-        console.log(`   📊 ${cost.cost_name}: ${quantity} × $${rate} = $${amount.toFixed(2)}`);
-        break;
+    // V9.1: Override mobilization with org-specific total
+    if (cost.cost_name.toLowerCase().includes('mobilization') && mobilizationTotal !== undefined) {
+      amount = mobilizationTotal;
+      quantity = 1;
+      rate = mobilizationTotal;
+      notes = mobilizationNote || cost.notes;
+      console.log(`   📊 ${cost.cost_name}: $${amount.toFixed(2)} (from org config)`);
+    } else {
+      switch (cost.cost_type) {
+        case 'percentage':
+          if (cost.calculation_formula?.includes('0.1265')) {
+            rate = SOC_UNEMPLOYMENT_RATE;
+            amount = installationLaborSubtotal * rate;
+            console.log(`   📊 ${cost.cost_name}: ${(rate * 100).toFixed(2)}% × $${installationLaborSubtotal.toFixed(2)} = $${amount.toFixed(2)}`);
+          }
+          break;
 
-      case 'per_day':
-        quantity = parseFloat(cost.default_quantity) || 1;
-        rate = parseFloat(cost.base_rate || '0');
-        amount = quantity * rate;
-        console.log(`   📊 ${cost.cost_name}: ${quantity} days × $${rate}/day = $${amount.toFixed(2)}`);
-        break;
+        case 'calculated':
+          if (cost.calculation_formula?.includes('crew_size')) {
+            const hours = crewSize * estimatedWeeks * 40;
+            rate = liHourlyRate;  // V9.1: Use org-specific L&I rate
+            amount = hours * rate;
+            quantity = hours;
+            console.log(`   📊 ${cost.cost_name}: ${hours} hrs × $${rate}/hr = $${amount.toFixed(2)}`);
+          }
+          break;
+
+        case 'flat_fee':
+          quantity = parseFloat(cost.default_quantity) || 1;
+          rate = parseFloat(cost.base_rate || '0');
+          amount = quantity * rate;
+          console.log(`   📊 ${cost.cost_name}: ${quantity} × $${rate} = $${amount.toFixed(2)}`);
+          break;
+
+        case 'per_day':
+          quantity = parseFloat(cost.default_quantity) || 1;
+          rate = parseFloat(cost.base_rate || '0');
+          amount = quantity * rate;
+          console.log(`   📊 ${cost.cost_name}: ${quantity} days × $${rate}/day = $${amount.toFixed(2)}`);
+          break;
+      }
     }
 
     if (amount > 0) {
@@ -681,7 +728,7 @@ function calculateOverhead(
         rate,
         amount: Math.round(amount * 100) / 100,
         calculation_type: cost.cost_type,
-        notes: cost.notes
+        notes
       });
     }
   }
@@ -694,12 +741,14 @@ function calculateOverhead(
 
 /**
  * Calculate final project totals with markup and insurance
+ * V9.1: Now accepts insuranceRatePerThousand parameter for org-specific rates
  */
 function calculateProjectTotals(
   materialCost: number,
   installationLaborSubtotal: number,
   overheadSubtotal: number,
-  markupRate: number = MARKUP_RATE
+  markupRate: number = MARKUP_RATE,
+  insuranceRatePerThousand: number = INSURANCE_RATE_PER_THOUSAND
 ): ProjectTotals {
 
   console.log('💰 Calculating project totals...');
@@ -707,6 +756,7 @@ function calculateProjectTotals(
   console.log(`   Installation labor: $${installationLaborSubtotal.toFixed(2)}`);
   console.log(`   Overhead: $${overheadSubtotal.toFixed(2)}`);
   console.log(`   Markup rate: ${(markupRate * 100).toFixed(0)}%`);
+  console.log(`   Insurance rate: $${insuranceRatePerThousand}/$1K`);
 
   const materialMarkupAmount = materialCost * markupRate;
   const materialTotal = materialCost + materialMarkupAmount;
@@ -716,7 +766,7 @@ function calculateProjectTotals(
   const laborTotal = laborCostBeforeMarkup + laborMarkupAmount;
 
   const subtotal = materialTotal + laborTotal;
-  const projectInsurance = (subtotal / 1000) * INSURANCE_RATE_PER_THOUSAND;
+  const projectInsurance = (subtotal / 1000) * insuranceRatePerThousand;
   const grandTotal = subtotal + projectInsurance;
 
   console.log(`   Material total (with markup): $${materialTotal.toFixed(2)}`);
@@ -915,6 +965,44 @@ export async function calculateWithAutoScopeV2(
       );
       console.log(`   Found ${sidingOverheadCosts.length} overhead costs for siding`);
     }
+  }
+
+  // =========================================================================
+  // FETCH ORGANIZATION OVERHEAD CONFIG
+  // Org-specific settings override hardcoded defaults for L&I, insurance,
+  // dumpster, toilet, mobilization, etc.
+  // =========================================================================
+  let orgOverheadConfig: OrgOverheadConfig | null = null;
+
+  if (organizationId && isDatabaseConfigured()) {
+    const client = getSupabaseClient();
+    console.log(`📋 Fetching org overhead config for org_id: ${organizationId}`);
+
+    const { data: orgData, error: orgError } = await client
+      .from('organizations')
+      .select('settings')
+      .eq('id', organizationId)
+      .single();
+
+    if (orgError) {
+      console.warn(`⚠️ Failed to fetch org config: ${orgError.message}`);
+    } else if (orgData?.settings?.overhead_config) {
+      orgOverheadConfig = orgData.settings.overhead_config as OrgOverheadConfig;
+      console.log('📊 Org overhead config: FOUND');
+      console.log(`   Dumpster: ${orgOverheadConfig.include_dumpster ? `$${orgOverheadConfig.dumpster_rate}` : 'EXCLUDED'}`);
+      console.log(`   Toilet: ${orgOverheadConfig.include_toilet ? `$${orgOverheadConfig.toilet_rate}` : 'EXCLUDED'}`);
+      console.log(`   Mobilization: $${orgOverheadConfig.mobilization_total}`);
+      console.log(`   L&I Rate: $${orgOverheadConfig.li_hourly_rate}/hr`);
+      console.log(`   Insurance: $${orgOverheadConfig.insurance_rate_per_thousand}/$1K`);
+    } else {
+      console.log('📊 Org overhead config: NOT FOUND (using defaults)');
+    }
+  }
+
+  // V9.1: Override insurance rate with org-specific value if available
+  const EFFECTIVE_INSURANCE_RATE = orgOverheadConfig?.insurance_rate_per_thousand ?? CALC_INSURANCE_RATE_PER_THOUSAND;
+  if (orgOverheadConfig?.insurance_rate_per_thousand) {
+    console.log(`📊 Using org-specific insurance rate: $${EFFECTIVE_INSURANCE_RATE}/$1K (was $${CALC_INSURANCE_RATE_PER_THOUSAND}/$1K)`);
   }
 
   // =========================================================================
@@ -2128,18 +2216,22 @@ export async function calculateWithAutoScopeV2(
   }
 
   // Calculate overhead costs (without project insurance - that's added after markup calculation)
+  // V9.1: Pass org overhead config for org-specific L&I, mobilization, dumpster/toilet exclusion
   const { overheadItems, subtotal: overheadSubtotal } = calculateOverhead(
     sidingOverheadCosts,
     laborSubtotal,
-    { crew_size: CALC_CREW_SIZE, estimated_weeks: CALC_ESTIMATED_WEEKS }
+    { crew_size: CALC_CREW_SIZE, estimated_weeks: CALC_ESTIMATED_WEEKS },
+    orgOverheadConfig
   );
 
   // Calculate final totals with markup
+  // V9.1: Pass org-specific insurance rate
   const projectTotals = calculateProjectTotals(
     materialTotal,
     laborSubtotal,
     overheadSubtotal,
-    CALC_MARKUP_RATE
+    CALC_MARKUP_RATE,
+    EFFECTIVE_INSURANCE_RATE
   );
 
   // =========================================================================
@@ -2159,7 +2251,7 @@ export async function calculateWithAutoScopeV2(
       rate: projectTotals.project_insurance,
       amount: projectTotals.project_insurance,
       calculation_type: 'calculated',
-      notes: `$${CALC_INSURANCE_RATE_PER_THOUSAND.toFixed(2)} per $1,000 of project subtotal ($${projectTotals.subtotal.toFixed(2)})`
+      notes: `$${EFFECTIVE_INSURANCE_RATE.toFixed(2)} per $1,000 of project subtotal ($${projectTotals.subtotal.toFixed(2)})`
     });
     console.log(`   📊 Project Insurance: $${projectTotals.project_insurance.toFixed(2)} (added to overhead items)`);
   }
