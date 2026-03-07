@@ -638,8 +638,9 @@ function calculateOverhead(
   const crewSize = orgConfig?.crew_size ?? config.crew_size ?? DEFAULT_CREW_SIZE;
   const estimatedWeeks = orgConfig?.estimated_weeks ?? config.estimated_weeks ?? DEFAULT_ESTIMATED_WEEKS;
   const liHourlyRate = orgConfig?.li_hourly_rate ?? LI_HOURLY_RATE;
-  const includeDumpster = orgConfig?.include_dumpster ?? true;
-  const includeToilet = orgConfig?.include_toilet ?? true;
+  // Use !== false to only skip when explicitly set to false (handles undefined/null as "include")
+  const includeDumpster = orgConfig?.include_dumpster !== false;
+  const includeToilet = orgConfig?.include_toilet !== false;
   const mobilizationTotal = orgConfig?.mobilization_total;
   const mobilizationNote = orgConfig?.mobilization_note;
 
