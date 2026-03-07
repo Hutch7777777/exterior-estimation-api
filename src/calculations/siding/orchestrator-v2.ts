@@ -15,7 +15,7 @@ import {
   buildAssignedMaterialsFromPricing,
 } from './autoscope-v2';
 import { AutoScopeLineItem, MaterialCategoryAreas } from '../../types/autoscope';
-import { getSupabaseClient, isDatabaseConfigured } from '../../services/database';
+import { getSupabaseClient, getSupabaseServiceClient, isDatabaseConfigured } from '../../services/database';
 import { getCalculationConstants } from '../../services/configService';
 
 // ============================================================================
@@ -975,17 +975,20 @@ export async function calculateWithAutoScopeV2(
   let orgOverheadConfig: OrgOverheadConfig | null = null;
 
   if (organizationId && isDatabaseConfigured()) {
-    const client = getSupabaseClient();
+    // Use service role client to bypass RLS (API isn't authenticated as a user)
+    const serviceClient = getSupabaseServiceClient();
     console.log(`📋 Fetching org overhead config for org_id: ${organizationId}`);
 
-    const { data: orgData, error: orgError } = await client
+    const { data: orgData, error: orgError } = await serviceClient
       .from('organizations')
       .select('settings')
       .eq('id', organizationId)
-      .single();
+      .maybeSingle();  // Use maybeSingle to handle 0 rows gracefully
 
     if (orgError) {
       console.warn(`⚠️ Failed to fetch org config: ${orgError.message}`);
+    } else if (!orgData) {
+      console.log(`ℹ️ No organization found for id: ${organizationId}`);
     } else if (orgData?.settings?.overhead_config) {
       orgOverheadConfig = orgData.settings.overhead_config as OrgOverheadConfig;
       console.log('📊 Org overhead config: FOUND');
