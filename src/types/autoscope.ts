@@ -240,6 +240,13 @@ export interface AutoScopeV2Options {
    * Fixes: B&B/Artisan rules using global area when only partial coverage assigned.
    */
   materialCategoryAreas?: MaterialCategoryAreas;
+
+  /**
+   * Phase 2B: Estimate settings from frontend EstimateSettingsPanel
+   * Controls section toggles (include: true/false) and manual LF overrides
+   * When present, overrides measurement values and enables/disables rule categories
+   */
+  estimateSettings?: EstimateSettings | null;
 }
 
 /**
@@ -360,3 +367,106 @@ export interface ManufacturerMeasurements {
  * }
  */
 export type ManufacturerGroups = Record<string, ManufacturerMeasurements>;
+
+// ============================================================================
+// ESTIMATE SETTINGS TYPES (Phase 2B)
+// From frontend EstimateSettingsPanel - controls which auto-scope rules fire
+// ============================================================================
+
+export interface EstimateSettingsWindowTrim {
+  include: boolean;
+  material?: string;
+  include_slope_sill?: boolean;
+  manual_lf?: number | null;
+}
+
+export interface EstimateSettingsDoorTrim {
+  include: boolean;
+  material?: string;
+  manual_lf?: number | null;
+}
+
+export interface EstimateSettingsTopOut {
+  include: boolean;
+  size_1?: string;
+  size_2?: string;
+  manual_lf?: number | null;
+}
+
+export interface EstimateSettingsBellyBand {
+  include: boolean;
+  size?: string;
+  flashing_type?: string;
+  manual_lf?: number | null;
+}
+
+export interface EstimateSettingsCorners {
+  include_inside?: boolean;
+  outside_count?: number | null;
+  outside_lf?: number | null;
+  inside_count?: number | null;
+  inside_lf?: number | null;
+  default_height?: number;
+}
+
+export interface EstimateSettingsWRB {
+  product?: string | null;
+  layer_mode?: 'auto' | 'single' | 'double';
+  include_seam_tape?: boolean;
+}
+
+export interface EstimateSettingsFlashing {
+  window_head?: 'kynar' | 'galvanized' | 'z-flashing' | 'none';
+  door_head?: 'kynar' | 'galvanized' | 'z-flashing' | 'none';
+  base_starter?: 'z-flashing' | 'drip-edge' | 'none';
+  include_kickout?: boolean;
+  include_corner_flashing?: boolean;
+  include_fortiflash?: boolean;
+  include_moistop?: boolean;
+  include_rolled_galv?: boolean;
+  include_joint_flashing?: boolean;
+}
+
+export interface EstimateSettingsConsumables {
+  caulk_type?: string;
+  include_paintable_caulk?: boolean;
+  include_color_matched_caulk?: boolean;
+  include_primer_cans?: boolean;
+  include_spackle?: boolean;
+  include_wood_blades?: boolean;
+  include_hardie_blades?: boolean;
+  include_siding_nails?: boolean;
+  include_trim_nails?: boolean;
+}
+
+export interface EstimateSettingsOverhead {
+  include_dumpster?: boolean;
+  dumpster_cost?: number;
+  include_toilet?: boolean;
+  toilet_cost?: number;
+  mobilization?: number;
+  mobilization_note?: string;
+  li_rate?: number;
+  insurance_rate?: number;
+  crew_size?: number;
+  estimated_weeks?: number;
+}
+
+/**
+ * Complete estimate settings from frontend EstimateSettingsPanel
+ * Controls which auto-scope rules fire and provides measurement overrides
+ */
+export interface EstimateSettings {
+  markup_percent?: number;
+  trim_system?: 'hardie' | 'whitewood';
+  wrb_product?: string | null;
+  window_trim?: EstimateSettingsWindowTrim;
+  door_trim?: EstimateSettingsDoorTrim;
+  top_out?: EstimateSettingsTopOut;
+  belly_band?: EstimateSettingsBellyBand;
+  corners?: EstimateSettingsCorners;
+  wrb?: EstimateSettingsWRB;
+  flashing?: EstimateSettingsFlashing;
+  consumables?: EstimateSettingsConsumables;
+  overhead?: EstimateSettingsOverhead;
+}

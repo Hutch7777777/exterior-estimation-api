@@ -21,7 +21,8 @@ import {
   ManufacturerGroups,
   ManufacturerMeasurements,
   AssignedMaterial,
-  MaterialCategoryAreas
+  MaterialCategoryAreas,
+  EstimateSettings,
 } from '../../types/autoscope';
 import { PerMaterialMeasurements } from '../../types/webhook';
 // PricingItem type used indirectly via getPricingByIds return type
@@ -359,6 +360,59 @@ export function buildMeasurementContext(
   });
 
   return ctx;
+}
+
+// ============================================================================
+// APPLY ESTIMATE SETTINGS OVERRIDES (Phase 2B)
+// ============================================================================
+
+/**
+ * Apply estimate_settings overrides to measurement context
+ * When frontend sends manual LF values, use those instead of computed values
+ */
+export function applyEstimateSettingsOverrides(
+  context: MeasurementContext,
+  estimateSettings: EstimateSettings | null | undefined
+): void {
+  if (!estimateSettings) return;
+
+  const overridesApplied: string[] = [];
+
+  if (estimateSettings.window_trim?.manual_lf != null) {
+    context.window_perimeter_lf = estimateSettings.window_trim.manual_lf;
+    overridesApplied.push(`window_perimeter_lf=${estimateSettings.window_trim.manual_lf}`);
+  }
+
+  if (estimateSettings.door_trim?.manual_lf != null) {
+    context.door_perimeter_lf = estimateSettings.door_trim.manual_lf;
+    overridesApplied.push(`door_perimeter_lf=${estimateSettings.door_trim.manual_lf}`);
+  }
+
+  if (estimateSettings.belly_band?.manual_lf != null) {
+    context.belly_band_lf = estimateSettings.belly_band.manual_lf;
+    overridesApplied.push(`belly_band_lf=${estimateSettings.belly_band.manual_lf}`);
+  }
+
+  if (estimateSettings.corners?.outside_count != null) {
+    context.outside_corner_count = estimateSettings.corners.outside_count;
+    context.outside_corners_count = estimateSettings.corners.outside_count;
+    overridesApplied.push(`outside_corner_count=${estimateSettings.corners.outside_count}`);
+  }
+
+  if (estimateSettings.corners?.outside_lf != null) {
+    context.outside_corner_lf = estimateSettings.corners.outside_lf;
+    context.total_corner_lf = context.outside_corner_lf + context.inside_corner_lf;
+    overridesApplied.push(`outside_corner_lf=${estimateSettings.corners.outside_lf}`);
+  }
+
+  if (estimateSettings.top_out?.manual_lf != null) {
+    context.facade_perimeter_lf = estimateSettings.top_out.manual_lf;
+    overridesApplied.push(`facade_perimeter_lf=${estimateSettings.top_out.manual_lf}`);
+  }
+
+  if (overridesApplied.length > 0) {
+    console.log(`⚙️ [Phase 2B] Applied estimate_settings overrides: ${overridesApplied.join(', ')}`);
+  }
 }
 
 // ============================================================================
@@ -1017,7 +1071,8 @@ export function shouldApplyRule(
   context: MeasurementContext,
   assignedMaterials?: AssignedMaterial[],
   config?: Record<string, any>,
-  trimSystem?: 'hardie' | 'whitewood'
+  trimSystem?: 'hardie' | 'whitewood',
+  estimateSettings?: EstimateSettings | null
 ): { applies: boolean; reason: string } {
   const tc = rule.trigger_condition;
   const materials = assignedMaterials || [];
@@ -1025,6 +1080,68 @@ export function shouldApplyRule(
 
   // Track matched conditions for reason string
   const matchedConditions: string[] = [];
+
+  // =========================================================================
+  // PHASE 2B: SECTION TOGGLE CHECKS
+  // =========================================================================
+  if (estimateSettings) {
+    const category = rule.material_category?.toLowerCase() || '';
+
+    // Window trim section toggle
+    if (estimateSettings.window_trim?.include === false) {
+      if (category.includes('window') || category === 'window_casing' || category === 'window_trim') {
+        return { applies: false, reason: 'section disabled: window_trim.include=false' };
+      }
+    }
+
+    // Door trim section toggle
+    if (estimateSettings.door_trim?.include === false) {
+      if (category.includes('door') || category === 'door_casing' || category === 'door_trim') {
+        return { applies: false, reason: 'section disabled: door_trim.include=false' };
+      }
+    }
+
+    // Top-out section toggle
+    if (estimateSettings.top_out?.include === false) {
+      if (category === 'top_out' || category === 'frieze' || category === 'frieze_board' ||
+          rule.rule_name?.toLowerCase().includes('top-out')) {
+        return { applies: false, reason: 'section disabled: top_out.include=false' };
+      }
+    }
+
+    // Belly band section toggle
+    if (estimateSettings.belly_band?.include === false) {
+      if (category === 'belly_band' || category === 'band_board' ||
+          rule.rule_name?.toLowerCase().includes('belly band')) {
+        return { applies: false, reason: 'section disabled: belly_band.include=false' };
+      }
+    }
+
+    // Flashing toggles
+    if (estimateSettings.flashing) {
+      const fl = estimateSettings.flashing;
+      if (fl.include_fortiflash === false && rule.rule_name?.toLowerCase().includes('fortiflash')) {
+        return { applies: false, reason: 'flashing.include_fortiflash=false' };
+      }
+      if (fl.include_moistop === false && rule.rule_name?.toLowerCase().includes('moistop')) {
+        return { applies: false, reason: 'flashing.include_moistop=false' };
+      }
+      if (fl.include_kickout === false && rule.rule_name?.toLowerCase().includes('kickout')) {
+        return { applies: false, reason: 'flashing.include_kickout=false' };
+      }
+    }
+
+    // Consumables toggles
+    if (estimateSettings.consumables) {
+      const cons = estimateSettings.consumables;
+      if (cons.include_primer_cans === false && rule.rule_name?.toLowerCase().includes('primer')) {
+        return { applies: false, reason: 'consumables.include_primer_cans=false' };
+      }
+      if (cons.include_spackle === false && rule.rule_name?.toLowerCase().includes('spackle')) {
+        return { applies: false, reason: 'consumables.include_spackle=false' };
+      }
+    }
+  }
 
   // =========================================================================
   // TRIM SYSTEM CHECK - Must be checked first for WhiteWood rules
@@ -1503,6 +1620,12 @@ export async function generateAutoScopeItemsV2(
   const trimSystem = options?.trimSystem || 'hardie';
   const wrbProduct = options?.wrbProduct || null;
 
+  // Phase 2B: Extract estimate settings from options
+  const estimateSettings = options?.estimateSettings || null;
+  if (estimateSettings) {
+    console.log('⚙️ [Phase 2B] estimate_settings received');
+  }
+
   // 1. Build measurement context (total project measurements)
   let dbMeasurements: CadHoverMeasurements | null = null;
 
@@ -1518,6 +1641,11 @@ export async function generateAutoScopeItemsV2(
   }
 
   const totalContext = buildMeasurementContext(dbMeasurements, webhookMeasurements);
+
+  // Phase 2B: Apply estimate_settings overrides to measurement context
+  if (estimateSettings) {
+    applyEstimateSettingsOverrides(totalContext, estimateSettings);
+  }
 
   // 2. Fetch auto-scope rules
   const rules = await fetchAutoScopeRules();
@@ -1585,7 +1713,7 @@ export async function generateAutoScopeItemsV2(
       // GENERIC RULE: Apply to total project measurements
       // But if rule has material_category in trigger_condition, scope to that category's area
       // =====================================================================
-      const { applies, reason } = shouldApplyRule(rule, totalContext, assignedMaterials, options?.config, trimSystem);
+      const { applies, reason } = shouldApplyRule(rule, totalContext, assignedMaterials, options?.config, trimSystem, estimateSettings);
 
       if (applies) {
         // Check if this rule targets a specific material_category
@@ -1666,7 +1794,7 @@ export async function generateAutoScopeItemsV2(
           mfrContext.net_siding_area_sqft = categoryArea;
         }
 
-        const { applies, reason } = shouldApplyRule(rule, mfrContext, assignedMaterials, options?.config, trimSystem);
+        const { applies, reason } = shouldApplyRule(rule, mfrContext, assignedMaterials, options?.config, trimSystem, estimateSettings);
 
         if (applies) {
           const { result: quantity, error } = evaluateFormula(rule.quantity_formula, mfrContext);

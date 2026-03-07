@@ -1012,6 +1012,35 @@ export async function calculateWithAutoScopeV2(
     }
   }
 
+  // =========================================================================
+  // Phase 2B: Apply estimate_settings.overhead overrides
+  // =========================================================================
+  const estSettingsOverhead = config?.estimate_settings?.overhead;
+  if (estSettingsOverhead && orgOverheadConfig) {
+    if (estSettingsOverhead.include_dumpster !== undefined) {
+      orgOverheadConfig.include_dumpster = estSettingsOverhead.include_dumpster;
+    }
+    if (estSettingsOverhead.dumpster_cost !== undefined) {
+      orgOverheadConfig.dumpster_rate = estSettingsOverhead.dumpster_cost;
+    }
+    if (estSettingsOverhead.include_toilet !== undefined) {
+      orgOverheadConfig.include_toilet = estSettingsOverhead.include_toilet;
+    }
+    if (estSettingsOverhead.toilet_cost !== undefined) {
+      orgOverheadConfig.toilet_rate = estSettingsOverhead.toilet_cost;
+    }
+    if (estSettingsOverhead.mobilization !== undefined) {
+      orgOverheadConfig.mobilization_total = estSettingsOverhead.mobilization;
+    }
+    if (estSettingsOverhead.li_rate !== undefined) {
+      orgOverheadConfig.li_hourly_rate = estSettingsOverhead.li_rate;
+    }
+    if (estSettingsOverhead.insurance_rate !== undefined) {
+      orgOverheadConfig.insurance_rate_per_thousand = estSettingsOverhead.insurance_rate;
+    }
+    console.log('⚙️ [Phase 2B] Overhead overridden from estimate_settings');
+  }
+
   // V9.1: Override insurance rate with org-specific value if available
   const EFFECTIVE_INSURANCE_RATE = orgOverheadConfig?.insurance_rate_per_thousand ?? CALC_INSURANCE_RATE_PER_THOUSAND;
   if (orgOverheadConfig?.insurance_rate_per_thousand) {
@@ -1410,6 +1439,14 @@ export async function calculateWithAutoScopeV2(
     console.log('   → Skipping default Hardie trim rules');
   }
 
+  // =========================================================================
+  // Phase 2B: Extract estimate_settings from config
+  // =========================================================================
+  const estimateSettings = config?.estimate_settings || null;
+  if (estimateSettings) {
+    console.log('⚙️ [Phase 2B] estimate_settings received');
+  }
+
   const autoScopeResult = await generateAutoScopeItemsV2(
     extractionId,
     enrichedMeasurements,
@@ -1426,6 +1463,8 @@ export async function calculateWithAutoScopeV2(
       // V9.0: Trim system and WRB product for rule filtering
       trimSystem,
       wrbProduct,
+      // Phase 2B: Pass estimate settings for section toggles and manual LF overrides
+      estimateSettings,
     }
   );
 
