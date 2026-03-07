@@ -669,8 +669,15 @@ function calculateOverhead(
       continue;
     }
 
-    // V9.1: Skip toilet if org config excludes it
-    if (cost.cost_name.toLowerCase().includes('toilet') && !includeToilet) {
+    // V9.1: Skip toilet/porta-potty if org config excludes it
+    // Match various names: "toilet", "porta potty", "port-a-john", "sanitation", "restroom"
+    const costNameLower = cost.cost_name.toLowerCase();
+    const isToiletItem = costNameLower.includes('toilet') ||
+                         costNameLower.includes('porta') ||
+                         costNameLower.includes('potty') ||
+                         costNameLower.includes('sanitation') ||
+                         costNameLower.includes('restroom');
+    if (isToiletItem && !includeToilet) {
       console.log(`   ⏭️ Skipping ${cost.cost_name} (org config: include_toilet=false)`);
       continue;
     }
