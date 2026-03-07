@@ -1068,16 +1068,28 @@ export function shouldApplyRule(
     }
 
     // { "sku_pattern": "16OC-CP" } - check if any assigned material SKU contains this pattern
+    // V9.1 FIX: When material_category is also specified, only check sku_pattern
+    // against products in that same category (prevents CP lap SKU from triggering CP B&B rules)
     if (tc.sku_pattern !== undefined) {
       const pattern = tc.sku_pattern.toLowerCase();
-      const hasMatchingSku = materials.some(
+
+      // Filter to category-specific products when material_category is specified
+      const productsToCheck = tc.material_category
+        ? materials.filter(m => {
+            const mCat = (m.category || '').toLowerCase();
+            const ruleCat = tc.material_category!.toLowerCase();
+            return mCat === ruleCat || mCat.includes(ruleCat) || ruleCat.includes(mCat);
+          })
+        : materials;
+
+      const hasMatchingSku = productsToCheck.some(
         m => m.sku?.toLowerCase().includes(pattern)
       );
 
       if (!hasMatchingSku) {
         return {
           applies: false,
-          reason: `no material SKU matching pattern '${tc.sku_pattern}'`
+          reason: `no material SKU matching pattern '${tc.sku_pattern}' in ${tc.material_category || 'all'} products`
         };
       }
       matchedConditions.push(`sku~${tc.sku_pattern}`);
