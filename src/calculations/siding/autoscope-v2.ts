@@ -95,6 +95,9 @@ interface DbTriggerCondition {
   // NEW: Config field triggers (check frontend config values)
   field?: string;              // Config field name, e.g., "paint_service_type"
   equals?: any;                // Expected value, e.g., "in_house"
+  // V9.0: Trim system toggle - controls which trim/flashing rules fire
+  // WhiteWood rules have { "trim_system": "whitewood", "always": true }
+  trim_system?: 'hardie' | 'whitewood';
 }
 
 // Exclusion condition format for excludes_if_attributes
@@ -1013,13 +1016,29 @@ export function shouldApplyRule(
   rule: DbAutoScopeRule,
   context: MeasurementContext,
   assignedMaterials?: AssignedMaterial[],
-  config?: Record<string, any>
+  config?: Record<string, any>,
+  trimSystem?: 'hardie' | 'whitewood'
 ): { applies: boolean; reason: string } {
   const tc = rule.trigger_condition;
   const materials = assignedMaterials || [];
+  const currentTrimSystem = trimSystem || 'hardie';
 
   // Track matched conditions for reason string
   const matchedConditions: string[] = [];
+
+  // =========================================================================
+  // TRIM SYSTEM CHECK - Must be checked first for WhiteWood rules
+  // Rules with trigger_condition.trim_system only fire when payload matches
+  // =========================================================================
+  if (tc?.trim_system !== undefined) {
+    if (tc.trim_system !== currentTrimSystem) {
+      return {
+        applies: false,
+        reason: `trim_system='${currentTrimSystem}' !== required '${tc.trim_system}'`
+      };
+    }
+    matchedConditions.push(`trim_system=${tc.trim_system}`);
+  }
 
   // No trigger condition = always apply (but still check excludes_if_attributes)
   if (!tc) {
@@ -1468,6 +1487,10 @@ export async function generateAutoScopeItemsV2(
   const assignedMaterials = options?.assignedMaterials || [];
   const materialCategoryAreas = options?.materialCategoryAreas || {};
 
+  // V9.0: Extract trim system and WRB product from options
+  const trimSystem = options?.trimSystem || 'hardie';
+  const wrbProduct = options?.wrbProduct || null;
+
   // 1. Build measurement context (total project measurements)
   let dbMeasurements: CadHoverMeasurements | null = null;
 
@@ -1508,6 +1531,16 @@ export async function generateAutoScopeItemsV2(
     }
   }
 
+  // V9.0: Log trim system and WRB product
+  console.log(`[AutoScope V9.0] Trim system: ${trimSystem}`);
+  if (trimSystem === 'whitewood') {
+    console.log(`[AutoScope V9.0] → Using WhiteWood lumber trim rules`);
+    console.log(`[AutoScope V9.0] → Skipping Hardie trim rules`);
+  }
+  if (wrbProduct) {
+    console.log(`[AutoScope V9.0] WRB product: ${wrbProduct}`);
+  }
+
   // 3. Evaluate each rule
   // Store triggered rules with their context info for line item generation
   const triggeredRules: Array<{
@@ -1540,7 +1573,7 @@ export async function generateAutoScopeItemsV2(
       // GENERIC RULE: Apply to total project measurements
       // But if rule has material_category in trigger_condition, scope to that category's area
       // =====================================================================
-      const { applies, reason } = shouldApplyRule(rule, totalContext, assignedMaterials, options?.config);
+      const { applies, reason } = shouldApplyRule(rule, totalContext, assignedMaterials, options?.config, trimSystem);
 
       if (applies) {
         // Check if this rule targets a specific material_category
@@ -1621,7 +1654,7 @@ export async function generateAutoScopeItemsV2(
           mfrContext.net_siding_area_sqft = categoryArea;
         }
 
-        const { applies, reason } = shouldApplyRule(rule, mfrContext, assignedMaterials, options?.config);
+        const { applies, reason } = shouldApplyRule(rule, mfrContext, assignedMaterials, options?.config, trimSystem);
 
         if (applies) {
           const { result: quantity, error } = evaluateFormula(rule.quantity_formula, mfrContext);

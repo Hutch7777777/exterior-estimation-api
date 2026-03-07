@@ -1293,6 +1293,22 @@ export async function calculateWithAutoScopeV2(
     console.log(`🎯 CATEGORY_AREAS_DEBUG: ${JSON.stringify(materialCategoryAreas)}`);
   }
 
+  // =========================================================================
+  // V9.0: Extract trim system and WRB product from config
+  // Frontend sends: config.trim_system = 'hardie' | 'whitewood'
+  // Frontend sends: config.wrb_product = 'henry-jumbotex' | 'henry-hydrotex' | etc.
+  // =========================================================================
+  const trimSystem = (config?.trim_system as 'hardie' | 'whitewood') || 'hardie';
+  const wrbProduct = config?.wrb_product as string | null || null;
+
+  console.log(`🔧 Trim system: ${trimSystem}`);
+  console.log(`🔧 WRB product: ${wrbProduct || 'not specified'}`);
+
+  if (trimSystem === 'whitewood') {
+    console.log('   → Using WhiteWood lumber trim rules');
+    console.log('   → Skipping default Hardie trim rules');
+  }
+
   const autoScopeResult = await generateAutoScopeItemsV2(
     extractionId,
     enrichedMeasurements,
@@ -1306,6 +1322,9 @@ export async function calculateWithAutoScopeV2(
       spatialContainment: spatialContainment,
       // Pass config for trigger_condition field checks (e.g., paint_service_type)
       config,
+      // V9.0: Trim system and WRB product for rule filtering
+      trimSystem,
+      wrbProduct,
     }
   );
 

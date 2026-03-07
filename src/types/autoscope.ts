@@ -227,6 +227,12 @@ export interface AutoScopeV2Options {
   /** Config values like paint_service_type, paint_coats, etc. */
   config?: Record<string, any>;
 
+  // V9.0: Trim System and WRB Product support
+  /** Trim system selection - 'hardie' (default) or 'whitewood' */
+  trimSystem?: 'hardie' | 'whitewood';
+  /** WRB product selection - determines double-layer logic for JumboTex */
+  wrbProduct?: string | null;
+
   /**
    * Per-material-category area totals for category-scoped auto-scope rules
    * When a rule has material_category in trigger_condition (e.g., board_batten, artisan),
