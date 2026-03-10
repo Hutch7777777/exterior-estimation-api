@@ -2269,12 +2269,69 @@ export async function calculateWithAutoScopeV2(
 
   // Calculate overhead costs (without project insurance - that's added after markup calculation)
   // V9.1: Pass org overhead config for org-specific L&I, mobilization, dumpster/toilet exclusion
-  const { overheadItems, subtotal: overheadSubtotal } = calculateOverhead(
+  let { overheadItems, subtotal: overheadSubtotal } = calculateOverhead(
     sidingOverheadCosts,
     laborSubtotal,
     { crew_size: CALC_CREW_SIZE, estimated_weeks: CALC_ESTIMATED_WEEKS },
     orgOverheadConfig
   );
+
+  // =========================================================================
+  // Phase 2B: Add dumpster/toilet from estimate_settings if not already present
+  // The overhead_costs table may not have these items, so we add them explicitly
+  // =========================================================================
+  const estOverhead = config?.estimate_settings?.overhead;
+  if (estOverhead) {
+    // Check if dumpster item already exists
+    const hasDumpster = overheadItems.some(item =>
+      item.cost_name.toLowerCase().includes('dumpster')
+    );
+
+    // Add dumpster if enabled, has cost, and not already present
+    if (!hasDumpster && estOverhead.include_dumpster && estOverhead.dumpster_cost && estOverhead.dumpster_cost > 0) {
+      const dumpsterCost = estOverhead.dumpster_cost;
+      overheadItems.push({
+        cost_id: 'EST-DUMPSTER',
+        cost_name: 'Dumpster Rental',
+        description: 'Roll-off dumpster rental for project duration',
+        category: 'site_services',
+        quantity: 1,
+        unit: 'ea',
+        rate: dumpsterCost,
+        amount: dumpsterCost,
+        calculation_type: 'flat_fee',
+        notes: `Dumpster rental for project duration`
+      });
+      overheadSubtotal += dumpsterCost;
+      console.log(`   📊 Dumpster Rental: $${dumpsterCost.toFixed(2)} (from estimate_settings)`);
+    }
+
+    // Check if toilet item already exists
+    const hasToilet = overheadItems.some(item => {
+      const name = item.cost_name.toLowerCase();
+      return name.includes('toilet') || name.includes('porta') || name.includes('potty') || name.includes('sanitation');
+    });
+
+    // Add toilet if enabled, has cost, and not already present
+    if (!hasToilet && estOverhead.include_toilet && estOverhead.toilet_cost && estOverhead.toilet_cost > 0) {
+      const toiletCost = estOverhead.toilet_cost;
+      const weeks = estOverhead.estimated_weeks || orgOverheadConfig?.estimated_weeks || CALC_ESTIMATED_WEEKS;
+      overheadItems.push({
+        cost_id: 'EST-TOILET',
+        cost_name: 'Portable Toilet Rental',
+        description: 'Porta potty rental for crew',
+        category: 'site_services',
+        quantity: 1,
+        unit: 'ea',
+        rate: toiletCost,
+        amount: toiletCost,
+        calculation_type: 'flat_fee',
+        notes: `Porta potty rental - ${weeks} weeks`
+      });
+      overheadSubtotal += toiletCost;
+      console.log(`   📊 Portable Toilet: $${toiletCost.toFixed(2)} (from estimate_settings)`);
+    }
+  }
 
   // Calculate final totals with markup
   // V9.1: Pass org-specific insurance rate

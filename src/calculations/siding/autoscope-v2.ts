@@ -111,6 +111,77 @@ interface ExcludesIfAttribute {
 // NOTE: AssignedMaterial interface is imported from '../../types/autoscope'
 
 // ============================================================================
+// HARDIE TRIM SKU LOOKUP MAP
+// Maps width (inches) + finish to actual pricing_items SKU
+// ============================================================================
+
+const HARDIE_TRIM_SKU_MAP: Record<string, Record<string, string>> = {
+  '3.5': { primed: 'HT-54-35-12-PR', colorplus: 'HT-54-35-12-CP' },
+  '4':   { primed: 'CASING-5/4X4X12', colorplus: 'HT-54-4-12-CP' },
+  '5.5': { primed: 'HT-54-55-12-PR', colorplus: 'HT-54-55-12-CP' },
+  '6':   { primed: 'JH-TRIM-BB-6-PR', colorplus: 'JH-TRIM-BB-6-CP' },
+  '7.25': { primed: 'HT-54-725-12-PR', colorplus: 'HT-54-725-12-CP' },
+};
+
+/**
+ * Resolve the correct HardieTrim SKU based on estimate_settings or config
+ * @param trimType - 'window' or 'door'
+ * @param config - Config object with window_trim_width, window_trim_finish, etc.
+ * @param estimateSettings - EstimateSettings from frontend
+ * @param defaultSku - Fallback SKU if settings not found
+ */
+function resolveHardieTrimSku(
+  trimType: 'window' | 'door',
+  config: Record<string, any> | undefined,
+  estimateSettings: EstimateSettings | null,
+  defaultSku: string
+): { sku: string; width: string; finish: string } {
+  // Try to get width and finish from config (trade_configurations)
+  const widthKey = `${trimType}_trim_width`;
+  const finishKey = `${trimType}_trim_finish`;
+
+  let width = config?.[widthKey] || '4';  // Default to 4"
+  let finish = config?.[finishKey] || 'primed';  // Default to primed
+
+  // Also check estimateSettings.window_trim.material or door_trim.material
+  // Format is like "hardie_5/4x4" or "hardie_5/4x6"
+  const trimSettings = trimType === 'window'
+    ? estimateSettings?.window_trim
+    : estimateSettings?.door_trim;
+
+  if (trimSettings?.material) {
+    // Parse material string like "hardie_5/4x4" to extract width
+    const materialMatch = trimSettings.material.match(/(\d+\.?\d*)$/);
+    if (materialMatch) {
+      width = materialMatch[1];
+    }
+  }
+
+  // Normalize width (e.g., "3.5" vs "3.5\"" vs "3 1/2")
+  width = width.replace(/"/g, '').replace(/'/g, '').trim();
+
+  // Map common variations
+  if (width === '3 1/2' || width === '3.5"') width = '3.5';
+  if (width === '5 1/2' || width === '5.5"') width = '5.5';
+  if (width === '7 1/4' || width === '7.25"') width = '7.25';
+
+  // Normalize finish
+  finish = finish.toLowerCase();
+  if (finish === 'color plus' || finish === 'color-plus') finish = 'colorplus';
+
+  // Look up SKU from map
+  const widthMap = HARDIE_TRIM_SKU_MAP[width];
+  if (widthMap && widthMap[finish]) {
+    console.log(`  🎯 Resolved ${trimType} trim: ${width}" ${finish} → ${widthMap[finish]}`);
+    return { sku: widthMap[finish], width, finish };
+  }
+
+  // Fallback to default SKU
+  console.log(`  ⚠️ Could not resolve ${trimType} trim SKU for width=${width}, finish=${finish}. Using default: ${defaultSku}`);
+  return { sku: defaultSku, width, finish };
+}
+
+// ============================================================================
 // FETCH RULES FROM DATABASE
 // ============================================================================
 
@@ -1821,13 +1892,45 @@ export async function generateAutoScopeItemsV2(
     }
   }
 
-  // 4. Fetch pricing for triggered SKUs
-  const skus = [...new Set(triggeredRules.map(tr => tr.rule.material_sku))];
+  // 4. Resolve SKUs for trim rules based on estimate_settings/config
+  // This allows user-selected trim widths and finishes to drive the correct SKU
+  const TRIM_CATEGORIES = ['window_trim', 'door_trim', 'window_casing', 'door_casing', 'casing', 'opening_trim'];
+
+  // Build a map of rule -> resolved SKU for trim rules
+  const resolvedSkuMap = new Map<number, { sku: string; width: string; finish: string }>();
+
+  for (const { rule } of triggeredRules) {
+    const category = rule.material_category?.toLowerCase() || '';
+
+    // Check if this is a trim rule that should use user settings
+    if (TRIM_CATEGORIES.some(tc => category.includes(tc))) {
+      // Determine if this is window or door trim
+      const isWindowTrim = category.includes('window') || (category === 'casing' && !category.includes('door'));
+      const isDoorTrim = category.includes('door');
+
+      if (isWindowTrim) {
+        const resolved = resolveHardieTrimSku('window', options?.config, estimateSettings, rule.material_sku);
+        resolvedSkuMap.set(rule.rule_id, resolved);
+      } else if (isDoorTrim) {
+        const resolved = resolveHardieTrimSku('door', options?.config, estimateSettings, rule.material_sku);
+        resolvedSkuMap.set(rule.rule_id, resolved);
+      }
+    }
+  }
+
+  // Collect all unique SKUs (use resolved SKUs where available)
+  const skus = [...new Set(triggeredRules.map(tr => {
+    const resolved = resolvedSkuMap.get(tr.rule.rule_id);
+    return resolved?.sku || tr.rule.material_sku;
+  }))];
   const pricingMap = await getPricingBySkus(skus, organizationId);
 
   // 5. Build line items with pricing
   for (const { rule, quantity, manufacturer, context } of triggeredRules) {
-    const pricing = pricingMap.get(rule.material_sku);
+    // Use resolved SKU for trim rules
+    const resolved = resolvedSkuMap.get(rule.rule_id);
+    const effectiveSku = resolved?.sku || rule.material_sku;
+    const pricing = pricingMap.get(effectiveSku);
 
     const rawMaterialCost = Number(pricing?.material_cost || 0);
     const laborUnitCost = Number(pricing?.base_labor_cost || 0);
@@ -1892,7 +1995,7 @@ export async function generateAutoScopeItemsV2(
 
     const lineItem: AutoScopeLineItem = {
       description,
-      sku: rule.material_sku,
+      sku: effectiveSku,  // Use resolved SKU for trim rules
       quantity: finalQuantity,
       unit: rule.output_unit || rule.unit,
       category: rule.material_category,
