@@ -132,7 +132,8 @@ router.post('/siding-estimator', async (req: Request, res: Response) => {
         webhookRequest.detection_counts,
         webhookRequest.per_material_measurements,     // V8.0
         webhookRequest.spatial_containment,           // V8.0
-        webhookRequest.config                         // Config for trigger_condition field checks
+        webhookRequest.config,                        // Config for trigger_condition field checks
+        webhookRequest.project_id                     // For fetching estimate_settings from DB
       );
 
       // Transform to webhook response format
@@ -329,7 +330,8 @@ router.post('/calculate-siding', async (req: Request, res: Response) => {
         webhookRequest.detection_counts,
         webhookRequest.per_material_measurements,     // V8.0
         webhookRequest.spatial_containment,           // V8.0
-        webhookRequest.config                         // Config for trigger_condition field checks
+        webhookRequest.config,                        // Config for trigger_condition field checks
+        webhookRequest.project_id                     // For fetching estimate_settings from DB
       );
 
       const response: WebhookResponse = {

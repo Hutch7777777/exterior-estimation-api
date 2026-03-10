@@ -229,3 +229,166 @@ export async function getPresentationGroupMap(
 
   return map;
 }
+
+// ---------------------------------------------------------------------------
+// PROJECT ESTIMATE SETTINGS (from project_configurations table)
+// ---------------------------------------------------------------------------
+
+/**
+ * Estimate settings from the frontend EstimateSettingsPanel
+ * Stored in project_configurations.configuration_data
+ */
+export interface ProjectEstimateSettings {
+  wrb?: {
+    product?: string;        // "tyvek-homewrap", "henry-jumbotex", etc.
+    layer_mode?: string;     // "auto", "single", "double"
+    include_seam_tape?: boolean;
+  };
+  corners?: {
+    default_height?: number;
+    include_inside?: boolean;
+    inside_count?: number | null;
+    inside_lf?: number | null;
+    outside_count?: number | null;
+    outside_lf?: number | null;
+  };
+  top_out?: {
+    include?: boolean;
+    size_1?: string;         // "1x2"
+    size_2?: string;         // "2x2"
+    manual_lf?: number | null;
+  };
+  flashing?: {
+    door_head?: string;      // "kynar", "galvanized", "z-flashing", "none"
+    window_head?: string;
+    base_starter?: string;   // "z-flashing", "drip-edge", "none"
+    include_kickout?: boolean;
+    include_moistop?: boolean;
+    include_fortiflash?: boolean;
+    include_rolled_galv?: boolean;
+    include_joint_flashing?: boolean;
+    include_corner_flashing?: boolean;
+  };
+  overhead?: {
+    li_rate?: number;
+    crew_size?: number;
+    toilet_cost?: number;
+    mobilization?: number;
+    dumpster_cost?: number;
+    include_toilet?: boolean;
+    insurance_rate?: number;
+    estimated_weeks?: number;
+    include_dumpster?: boolean;
+    mobilization_note?: string;
+  };
+  door_trim?: {
+    include?: boolean;
+    material?: string;       // "hardie_5/4x6"
+    manual_lf?: number | null;
+  };
+  window_trim?: {
+    include?: boolean;
+    material?: string;       // "hardie_5/4x4"
+    manual_lf?: number | null;
+    include_slope_sill?: boolean;
+  };
+  belly_band?: {
+    include?: boolean;
+    size?: string;
+    manual_lf?: number | null;
+    flashing_type?: string;
+  };
+  consumables?: {
+    caulk_type?: string;
+    include_spackle?: boolean;
+    include_trim_nails?: boolean;
+    include_primer_cans?: boolean;
+    include_wood_blades?: boolean;
+    include_siding_nails?: boolean;
+    include_hardie_blades?: boolean;
+    include_paintable_caulk?: boolean;
+    include_color_matched_caulk?: boolean;
+  };
+  trim_system?: string;      // "hardie" | "whitewood"
+  wrb_product?: string | null;
+  markup_percent?: number;
+  // Trade configuration fields (from trade_configurations form)
+  window_trim_width?: string;   // "3.5", "4", "5.5", "6", "7.25"
+  window_trim_finish?: string;  // "colorplus", "primed"
+  door_trim_width?: string;
+  door_trim_finish?: string;
+}
+
+/**
+ * Fetch estimate settings from project_configurations table
+ * Uses service role client to bypass RLS
+ *
+ * @param projectId - The project UUID
+ * @returns Estimate settings or null if not found
+ */
+export async function getProjectEstimateSettings(
+  projectId: string
+): Promise<ProjectEstimateSettings | null> {
+  if (!projectId) {
+    console.log('⚠️ getProjectEstimateSettings: No project_id provided');
+    return null;
+  }
+
+  if (!isDatabaseConfigured()) {
+    console.warn('⚠️ getProjectEstimateSettings: Database not configured');
+    return null;
+  }
+
+  try {
+    // Use service role client to bypass RLS
+    const { getSupabaseServiceClient } = await import('./database');
+    const supabase = getSupabaseServiceClient();
+
+    // Fetch the siding trade configuration (has wrb, overhead, trim settings)
+    // May have multiple rows per project (one per trade), so we order by updated_at
+    const { data, error } = await supabase
+      .from('project_configurations')
+      .select('configuration_data, trade, updated_at')
+      .eq('project_id', projectId)
+      .order('updated_at', { ascending: false });
+
+    if (error) {
+      console.error('⚠️ getProjectEstimateSettings: Query error:', error.message);
+      return null;
+    }
+
+    if (!data || data.length === 0) {
+      console.log(`ℹ️ getProjectEstimateSettings: No config found for project ${projectId}`);
+      return null;
+    }
+
+    // Look for siding trade config first (has overhead, wrb, trim settings)
+    const sidingConfig = data.find((row: any) => row.trade === 'siding');
+    if (sidingConfig?.configuration_data) {
+      console.log(`✅ getProjectEstimateSettings: Loaded siding config for project ${projectId}`);
+      return sidingConfig.configuration_data as ProjectEstimateSettings;
+    }
+
+    // Fallback: use the most recently updated config that has estimate settings keys
+    for (const row of data) {
+      const config = row.configuration_data as any;
+      if (config && (config.overhead || config.trim_system || config.wrb || config.window_trim)) {
+        console.log(`✅ getProjectEstimateSettings: Loaded config (trade=${row.trade}) for project ${projectId}`);
+        return config as ProjectEstimateSettings;
+      }
+    }
+
+    // Last resort: return the first row's config
+    if (data[0]?.configuration_data) {
+      console.log(`✅ getProjectEstimateSettings: Using first available config for project ${projectId}`);
+      return data[0].configuration_data as ProjectEstimateSettings;
+    }
+
+    console.log(`ℹ️ getProjectEstimateSettings: No valid config data for project ${projectId}`);
+    return null;
+
+  } catch (err: any) {
+    console.error('⚠️ getProjectEstimateSettings: Exception:', err.message);
+    return null;
+  }
+}

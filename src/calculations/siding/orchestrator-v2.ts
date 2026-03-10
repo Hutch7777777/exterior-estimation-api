@@ -16,7 +16,7 @@ import {
 } from './autoscope-v2';
 import { AutoScopeLineItem, MaterialCategoryAreas } from '../../types/autoscope';
 import { getSupabaseClient, getSupabaseServiceClient, isDatabaseConfigured } from '../../services/database';
-import { getCalculationConstants } from '../../services/configService';
+import { getCalculationConstants, getProjectEstimateSettings, ProjectEstimateSettings } from '../../services/configService';
 
 // ============================================================================
 // TYPES
@@ -834,7 +834,9 @@ export async function calculateWithAutoScopeV2(
     unmatched_openings?: number;
   },
   // Config fields from frontend (for paint service, etc.)
-  config?: Record<string, any>
+  config?: Record<string, any>,
+  // Project ID for fetching estimate settings from database
+  projectId?: string
 ): Promise<V2CalculationResult> {
   // =========================================================================
   // Phase 5: Load constants from database (cached 5 min, falls back to hardcoded)
@@ -847,6 +849,43 @@ export async function calculateWithAutoScopeV2(
   const CALC_CREW_SIZE = dbConstants.default_crew_size;
   const CALC_ESTIMATED_WEEKS = dbConstants.default_estimated_weeks;
   console.log(`📋 Constants from DB: markup=${CALC_MARKUP_RATE}, L&I=${CALC_SOC_UNEMPLOYMENT_RATE}, insurance=$${CALC_INSURANCE_RATE_PER_THOUSAND}/1000`);
+
+  // =========================================================================
+  // FETCH ESTIMATE SETTINGS FROM DATABASE
+  // n8n strips estimate_settings from the payload, so we fetch directly from
+  // project_configurations table using the project_id
+  // =========================================================================
+  let dbEstimateSettings: ProjectEstimateSettings | null = null;
+  if (projectId) {
+    dbEstimateSettings = await getProjectEstimateSettings(projectId);
+    if (dbEstimateSettings) {
+      console.log('✅ Loaded estimate_settings from database:', {
+        trim_system: dbEstimateSettings.trim_system,
+        wrb_product: dbEstimateSettings.wrb_product || dbEstimateSettings.wrb?.product,
+        window_trim_width: dbEstimateSettings.window_trim_width,
+        door_trim_width: dbEstimateSettings.door_trim_width,
+        overhead_dumpster: dbEstimateSettings.overhead?.include_dumpster,
+        overhead_toilet: dbEstimateSettings.overhead?.include_toilet,
+      });
+    }
+  }
+
+  // Merge DB settings into config.estimate_settings (DB takes precedence)
+  // This ensures all downstream code uses the fetched settings
+  if (!config) {
+    config = {};
+  }
+  if (dbEstimateSettings) {
+    config.estimate_settings = {
+      ...(config.estimate_settings || {}),
+      ...dbEstimateSettings,
+    };
+    // Also set top-level convenience fields
+    config.window_trim_width = dbEstimateSettings.window_trim_width || config.window_trim_width;
+    config.window_trim_finish = dbEstimateSettings.window_trim_finish || config.window_trim_finish;
+    config.door_trim_width = dbEstimateSettings.door_trim_width || config.door_trim_width;
+    config.door_trim_finish = dbEstimateSettings.door_trim_finish || config.door_trim_finish;
+  }
 
   // =========================================================================
   // DEBUG: Log ALL incoming parameters at function entry
