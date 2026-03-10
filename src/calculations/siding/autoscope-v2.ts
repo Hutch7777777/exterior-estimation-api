@@ -1839,10 +1839,10 @@ export async function generateAutoScopeItemsV2(
     const isLaborOnlyItem = rawMaterialCost === 0 && totalLaborRate > 0;
     const materialUnitCost = isLaborOnlyItem ? totalLaborRate : rawMaterialCost;
 
-    // For manufacturer-specific rules, include manufacturer in description
-    const description = manufacturer
-      ? `${rule.rule_name} (${manufacturer})`
-      : rule.rule_name;
+    // Use product_name from pricing lookup for vendor-ready descriptions
+    // Fallback to rule_name + manufacturer if pricing not found
+    const description = pricing?.product_name
+      || (manufacturer ? `${rule.rule_name} (${manufacturer})` : rule.rule_name);
 
     // Build note from template with variable substitution
     // Extra values for template: quantity, coverage, waste_factor, piece_length, unit, unit_cost
