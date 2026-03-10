@@ -1700,11 +1700,26 @@ export async function generateAutoScopeItemsV2(
   // 1. Build measurement context (total project measurements)
   let dbMeasurements: CadHoverMeasurements | null = null;
 
+  // DEBUG: Log what we're working with
+  console.log('🔍 [AutoScope] Input diagnostics:');
+  console.log(`   extractionId: ${extractionId || 'NOT PROVIDED'}`);
+  console.log(`   webhookMeasurements keys: ${webhookMeasurements ? Object.keys(webhookMeasurements).join(', ') : 'NONE'}`);
+  if (webhookMeasurements) {
+    console.log(`   webhookMeasurements.facade_sqft: ${(webhookMeasurements as any).facade_sqft}`);
+    console.log(`   webhookMeasurements.facade_total_sqft: ${(webhookMeasurements as any).facade_total_sqft}`);
+    console.log(`   webhookMeasurements.gross_wall_area_sqft: ${(webhookMeasurements as any).gross_wall_area_sqft}`);
+  }
+
   if (extractionId) {
     dbMeasurements = await fetchMeasurementsFromDatabase(extractionId);
     if (dbMeasurements) {
       result.measurement_source = 'database';
+      console.log(`✅ [AutoScope] Loaded dbMeasurements: facade_total_sqft=${(dbMeasurements as any).facade_total_sqft}`);
+    } else {
+      console.log(`⚠️ [AutoScope] fetchMeasurementsFromDatabase returned null for extractionId=${extractionId}`);
     }
+  } else {
+    console.log('⚠️ [AutoScope] No extractionId provided - skipping DB fetch');
   }
 
   if (!dbMeasurements && webhookMeasurements) {
@@ -1712,6 +1727,34 @@ export async function generateAutoScopeItemsV2(
   }
 
   const totalContext = buildMeasurementContext(dbMeasurements, webhookMeasurements);
+
+  // =========================================================================
+  // FALLBACK: Reconstruct facade_area_sqft from manufacturer groups if empty
+  // This handles cases where neither DB nor webhook has aggregate measurements
+  // but we DO have per-material measurements from spatial containment
+  // =========================================================================
+  if (totalContext.facade_area_sqft === 0 && Object.keys(manufacturerGroups).length > 0) {
+    let totalArea = 0;
+    let totalPerimeter = 0;
+    for (const [mfr, data] of Object.entries(manufacturerGroups)) {
+      totalArea += data.area_sqft || 0;
+      totalPerimeter += data.linear_ft || 0;
+    }
+    if (totalArea > 0) {
+      console.log(`⚠️ [AutoScope] FALLBACK: Reconstructing totalContext from ${Object.keys(manufacturerGroups).length} manufacturer groups`);
+      console.log(`   Total area from manufacturers: ${totalArea.toFixed(2)} SF`);
+      console.log(`   Total perimeter from manufacturers: ${totalPerimeter.toFixed(2)} LF`);
+      totalContext.facade_area_sqft = totalArea;
+      totalContext.facade_sqft = totalArea;
+      totalContext.gross_wall_area_sqft = totalArea;
+      totalContext.net_siding_area_sqft = totalArea;
+      // Estimate perimeter from area if not available
+      if (totalContext.facade_perimeter_lf === 0 && totalContext.avg_wall_height_ft > 0) {
+        totalContext.facade_perimeter_lf = totalArea / totalContext.avg_wall_height_ft;
+        console.log(`   Estimated perimeter: ${totalContext.facade_perimeter_lf.toFixed(2)} LF (area / height)`);
+      }
+    }
+  }
 
   // Phase 2B: Apply estimate_settings overrides to measurement context
   if (estimateSettings) {
