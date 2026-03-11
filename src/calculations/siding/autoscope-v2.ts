@@ -111,6 +111,26 @@ interface ExcludesIfAttribute {
 // NOTE: AssignedMaterial interface is imported from '../../types/autoscope'
 
 // ============================================================================
+// BOOLEAN HELPERS - Handle JSON string "true"/"false" from Supabase
+// ============================================================================
+
+/**
+ * Check if a value is explicitly false (handles both boolean false and string "false")
+ * Used for toggle checks where undefined/null means "include" (backwards compat)
+ */
+function isFalse(value: unknown): boolean {
+  return value === false || value === 'false';
+}
+
+/**
+ * Check if a value is explicitly true (handles both boolean true and string "true")
+ * Used for overhead toggles where we only add items when explicitly enabled
+ */
+function isTrue(value: unknown): boolean {
+  return value === true || value === 'true';
+}
+
+// ============================================================================
 // HARDIE TRIM SKU LOOKUP MAP
 // Maps width (inches) + finish to actual pricing_items SKU
 // ============================================================================
@@ -1171,13 +1191,13 @@ export function shouldApplyRule(
 
   // --- TRIM TOGGLES ---
   if (['window_trim', 'window_casing'].includes(category) || category.includes('window')) {
-    if (es.window_trim?.include === false) {
+    if (isFalse(es.window_trim?.include)) {
       return { applies: false, reason: 'window_trim.include is false' };
     }
   }
 
   if (['door_trim', 'door_casing'].includes(category) || category.includes('door')) {
-    if (es.door_trim?.include === false) {
+    if (isFalse(es.door_trim?.include)) {
       return { applies: false, reason: 'door_trim.include is false' };
     }
   }
@@ -1187,58 +1207,58 @@ export function shouldApplyRule(
   // but rule_name contains "Top-Out"
   if (ruleNameLower.includes('top-out') || ruleNameLower.includes('topout') ||
       category === 'top_out' || category === 'frieze' || category === 'frieze_board') {
-    if (es.top_out?.include === false) {
+    if (isFalse(es.top_out?.include)) {
       return { applies: false, reason: 'top_out.include is false' };
     }
   }
 
   // --- BELLY BAND TOGGLE ---
   if (category === 'belly_band' || category === 'band_board' || ruleNameLower.includes('belly band')) {
-    if (es.belly_band?.include === false) {
+    if (isFalse(es.belly_band?.include)) {
       return { applies: false, reason: 'belly_band.include is false' };
     }
   }
 
   // --- FLASHING TOGGLES ---
   if (ruleNameLower.includes('kickout')) {
-    if (es.flashing?.include_kickout === false) {
+    if (isFalse(es.flashing?.include_kickout)) {
       return { applies: false, reason: 'flashing.include_kickout is false' };
     }
   }
 
   if (category === 'flashing_tape' || ruleNameLower.includes('joint flashing')) {
-    if (es.flashing?.include_joint_flashing === false) {
+    if (isFalse(es.flashing?.include_joint_flashing)) {
       return { applies: false, reason: 'flashing.include_joint_flashing is false' };
     }
   }
 
   if (ruleNameLower.includes('corner flashing')) {
-    if (es.flashing?.include_corner_flashing === false) {
+    if (isFalse(es.flashing?.include_corner_flashing)) {
       return { applies: false, reason: 'flashing.include_corner_flashing is false' };
     }
   }
 
   if (ruleNameLower.includes('fortiflash')) {
-    if (es.flashing?.include_fortiflash === false) {
+    if (isFalse(es.flashing?.include_fortiflash)) {
       return { applies: false, reason: 'flashing.include_fortiflash is false' };
     }
   }
 
   if (ruleNameLower.includes('moistop')) {
-    if (es.flashing?.include_moistop === false) {
+    if (isFalse(es.flashing?.include_moistop)) {
       return { applies: false, reason: 'flashing.include_moistop is false' };
     }
   }
 
   if (ruleNameLower.includes('galvanized rolled') || ruleNameLower.includes('rolled galv')) {
-    if (es.flashing?.include_rolled_galv === false) {
+    if (isFalse(es.flashing?.include_rolled_galv)) {
       return { applies: false, reason: 'flashing.include_rolled_galv is false' };
     }
   }
 
   // --- WRB TOGGLES ---
   if (ruleNameLower.includes('seam tape')) {
-    if (es.wrb?.include_seam_tape === false) {
+    if (isFalse(es.wrb?.include_seam_tape)) {
       return { applies: false, reason: 'wrb.include_seam_tape is false' };
     }
   }
@@ -1247,14 +1267,14 @@ export function shouldApplyRule(
   // Siding nails
   if ((category === 'fasteners' || ruleNameLower.includes('siding nail') || ruleNameLower.includes('siding fastener')) &&
       !ruleNameLower.includes('trim')) {
-    if (es.consumables?.include_siding_nails === false) {
+    if (isFalse(es.consumables?.include_siding_nails)) {
       return { applies: false, reason: 'consumables.include_siding_nails is false' };
     }
   }
 
   // Trim nails
   if (ruleNameLower.includes('trim nail') || ruleNameLower.includes('trim fastener')) {
-    if (es.consumables?.include_trim_nails === false) {
+    if (isFalse(es.consumables?.include_trim_nails)) {
       return { applies: false, reason: 'consumables.include_trim_nails is false' };
     }
   }
@@ -1262,7 +1282,7 @@ export function shouldApplyRule(
   // Paintable caulk
   if (ruleNameLower.includes('paintable caulk') || ruleNameLower.includes('paintable sealant')) {
     console.log(`🧪 PAINTABLE CAULK CHECK: rule="${rule.rule_name}", es.consumables=${JSON.stringify(es.consumables)}`);
-    if (es.consumables?.include_paintable_caulk === false) {
+    if (isFalse(es.consumables?.include_paintable_caulk)) {
       return { applies: false, reason: 'consumables.include_paintable_caulk is false' };
     }
   }
@@ -1270,7 +1290,7 @@ export function shouldApplyRule(
   // Also check for "titebond" which is a common paintable caulk brand
   if (ruleNameLower.includes('titebond') && !ruleNameLower.includes('color')) {
     console.log(`🧪 TITEBOND CHECK: rule="${rule.rule_name}", es.consumables=${JSON.stringify(es.consumables)}`);
-    if (es.consumables?.include_paintable_caulk === false) {
+    if (isFalse(es.consumables?.include_paintable_caulk)) {
       return { applies: false, reason: 'consumables.include_paintable_caulk is false (titebond)' };
     }
   }
@@ -1278,7 +1298,7 @@ export function shouldApplyRule(
   // Color-matched caulk
   if (ruleNameLower.includes('color-matched') || ruleNameLower.includes('color match')) {
     console.log(`🧪 COLOR-MATCHED CAULK CHECK: rule="${rule.rule_name}", es.consumables=${JSON.stringify(es.consumables)}`);
-    if (es.consumables?.include_color_matched_caulk === false) {
+    if (isFalse(es.consumables?.include_color_matched_caulk)) {
       return { applies: false, reason: 'consumables.include_color_matched_caulk is false' };
     }
   }
@@ -1288,35 +1308,35 @@ export function shouldApplyRule(
   if ((ruleNameLower.includes('caulk') || ruleNameLower.includes('sealant')) &&
       !ruleNameLower.includes('color-matched') && !ruleNameLower.includes('color match')) {
     console.log(`🧪 GENERIC CAULK CHECK: rule="${rule.rule_name}", es.consumables.paintable=${es.consumables?.include_paintable_caulk}`);
-    if (es.consumables?.include_paintable_caulk === false) {
+    if (isFalse(es.consumables?.include_paintable_caulk)) {
       return { applies: false, reason: 'consumables.include_paintable_caulk is false (generic caulk)' };
     }
   }
 
   // Hardie blades
   if (ruleNameLower.includes('hardie blade') || ruleNameLower.includes('fiber cement blade')) {
-    if (es.consumables?.include_hardie_blades === false) {
+    if (isFalse(es.consumables?.include_hardie_blades)) {
       return { applies: false, reason: 'consumables.include_hardie_blades is false' };
     }
   }
 
   // Wood blades
   if (ruleNameLower.includes('wood blade')) {
-    if (es.consumables?.include_wood_blades === false) {
+    if (isFalse(es.consumables?.include_wood_blades)) {
       return { applies: false, reason: 'consumables.include_wood_blades is false' };
     }
   }
 
   // Spackle
   if (ruleNameLower.includes('spackle')) {
-    if (es.consumables?.include_spackle === false) {
+    if (isFalse(es.consumables?.include_spackle)) {
       return { applies: false, reason: 'consumables.include_spackle is false' };
     }
   }
 
   // Primer
   if (ruleNameLower.includes('primer')) {
-    if (es.consumables?.include_primer_cans === false) {
+    if (isFalse(es.consumables?.include_primer_cans)) {
       return { applies: false, reason: 'consumables.include_primer_cans is false' };
     }
   }

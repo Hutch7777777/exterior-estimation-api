@@ -19,6 +19,24 @@ import { getSupabaseClient, getSupabaseServiceClient, isDatabaseConfigured } fro
 import { getCalculationConstants, getProjectEstimateSettings, ProjectEstimateSettings } from '../../services/configService';
 
 // ============================================================================
+// BOOLEAN HELPERS - Handle JSON string "true"/"false" from Supabase
+// ============================================================================
+
+/**
+ * Check if a value is explicitly false (handles both boolean false and string "false")
+ */
+function isFalse(value: unknown): boolean {
+  return value === false || value === 'false';
+}
+
+/**
+ * Check if a value is explicitly true (handles both boolean true and string "true")
+ */
+function isTrue(value: unknown): boolean {
+  return value === true || value === 'true';
+}
+
+// ============================================================================
 // TYPES
 // ============================================================================
 
@@ -638,9 +656,9 @@ function calculateOverhead(
   const crewSize = orgConfig?.crew_size ?? config.crew_size ?? DEFAULT_CREW_SIZE;
   const estimatedWeeks = orgConfig?.estimated_weeks ?? config.estimated_weeks ?? DEFAULT_ESTIMATED_WEEKS;
   const liHourlyRate = orgConfig?.li_hourly_rate ?? LI_HOURLY_RATE;
-  // Use !== false to only skip when explicitly set to false (handles undefined/null as "include")
-  const includeDumpster = orgConfig?.include_dumpster !== false;
-  const includeToilet = orgConfig?.include_toilet !== false;
+  // Use !isFalse() to skip when explicitly set to false or "false" (handles undefined/null as "include")
+  const includeDumpster = !isFalse(orgConfig?.include_dumpster);
+  const includeToilet = !isFalse(orgConfig?.include_toilet);
   const mobilizationTotal = orgConfig?.mobilization_total;
   const mobilizationNote = orgConfig?.mobilization_note;
 
@@ -2334,9 +2352,9 @@ export async function calculateWithAutoScopeV2(
       item.cost_name.toLowerCase().includes('dumpster')
     );
 
-    // Add dumpster if explicitly enabled (=== true), has cost, and not already present
+    // Add dumpster if explicitly enabled (true or "true"), has cost, and not already present
     // Missing field should NOT add item - only explicit true triggers addition
-    if (!hasDumpster && estOverhead.include_dumpster === true && estOverhead.dumpster_cost && estOverhead.dumpster_cost > 0) {
+    if (!hasDumpster && isTrue(estOverhead.include_dumpster) && estOverhead.dumpster_cost && estOverhead.dumpster_cost > 0) {
       const dumpsterCost = estOverhead.dumpster_cost;
       overheadItems.push({
         cost_id: 'EST-DUMPSTER',
@@ -2360,9 +2378,9 @@ export async function calculateWithAutoScopeV2(
       return name.includes('toilet') || name.includes('porta') || name.includes('potty') || name.includes('sanitation');
     });
 
-    // Add toilet if explicitly enabled (=== true), has cost, and not already present
+    // Add toilet if explicitly enabled (true or "true"), has cost, and not already present
     // Missing field should NOT add item - only explicit true triggers addition
-    if (!hasToilet && estOverhead.include_toilet === true && estOverhead.toilet_cost && estOverhead.toilet_cost > 0) {
+    if (!hasToilet && isTrue(estOverhead.include_toilet) && estOverhead.toilet_cost && estOverhead.toilet_cost > 0) {
       const toiletCost = estOverhead.toilet_cost;
       const weeks = estOverhead.estimated_weeks || orgOverheadConfig?.estimated_weeks || CALC_ESTIMATED_WEEKS;
       overheadItems.push({
