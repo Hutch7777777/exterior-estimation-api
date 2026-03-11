@@ -860,12 +860,14 @@ export async function calculateWithAutoScopeV2(
     dbEstimateSettings = await getProjectEstimateSettings(projectId);
     if (dbEstimateSettings) {
       console.log('✅ Loaded estimate_settings from database:', {
+        allKeys: Object.keys(dbEstimateSettings),
         trim_system: dbEstimateSettings.trim_system,
         wrb_product: dbEstimateSettings.wrb_product || dbEstimateSettings.wrb?.product,
         window_trim_width: dbEstimateSettings.window_trim_width,
         door_trim_width: dbEstimateSettings.door_trim_width,
-        overhead_dumpster: dbEstimateSettings.overhead?.include_dumpster,
-        overhead_toilet: dbEstimateSettings.overhead?.include_toilet,
+        overhead: dbEstimateSettings.overhead,
+        consumables: dbEstimateSettings.consumables,
+        flashing: dbEstimateSettings.flashing,
       });
     }
   }
@@ -1483,7 +1485,13 @@ export async function calculateWithAutoScopeV2(
   // =========================================================================
   const estimateSettings = config?.estimate_settings || null;
   if (estimateSettings) {
-    console.log('⚙️ [Phase 2B] estimate_settings received');
+    console.log('⚙️ [Phase 2B] estimate_settings passed to auto-scope:', {
+      keys: Object.keys(estimateSettings),
+      consumables: estimateSettings.consumables,
+      flashing: estimateSettings.flashing,
+    });
+  } else {
+    console.log('⚠️ [Phase 2B] No estimate_settings in config');
   }
 
   const autoScopeResult = await generateAutoScopeItemsV2(
@@ -2326,8 +2334,9 @@ export async function calculateWithAutoScopeV2(
       item.cost_name.toLowerCase().includes('dumpster')
     );
 
-    // Add dumpster if enabled, has cost, and not already present
-    if (!hasDumpster && estOverhead.include_dumpster && estOverhead.dumpster_cost && estOverhead.dumpster_cost > 0) {
+    // Add dumpster if explicitly enabled (=== true), has cost, and not already present
+    // Missing field should NOT add item - only explicit true triggers addition
+    if (!hasDumpster && estOverhead.include_dumpster === true && estOverhead.dumpster_cost && estOverhead.dumpster_cost > 0) {
       const dumpsterCost = estOverhead.dumpster_cost;
       overheadItems.push({
         cost_id: 'EST-DUMPSTER',
@@ -2351,8 +2360,9 @@ export async function calculateWithAutoScopeV2(
       return name.includes('toilet') || name.includes('porta') || name.includes('potty') || name.includes('sanitation');
     });
 
-    // Add toilet if enabled, has cost, and not already present
-    if (!hasToilet && estOverhead.include_toilet && estOverhead.toilet_cost && estOverhead.toilet_cost > 0) {
+    // Add toilet if explicitly enabled (=== true), has cost, and not already present
+    // Missing field should NOT add item - only explicit true triggers addition
+    if (!hasToilet && estOverhead.include_toilet === true && estOverhead.toilet_cost && estOverhead.toilet_cost > 0) {
       const toiletCost = estOverhead.toilet_cost;
       const weeks = estOverhead.estimated_weeks || orgOverheadConfig?.estimated_weeks || CALC_ESTIMATED_WEEKS;
       overheadItems.push({
