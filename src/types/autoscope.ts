@@ -48,6 +48,14 @@ export interface MeasurementContext {
   belly_band_count: number;
   belly_band_lf: number;
 
+  // Gable Topout
+  gable_topout_count: number;
+  gable_topout_lf: number;
+
+  // Topout
+  topout_count: number;
+  topout_lf: number;
+
   // Other
   level_starter_lf: number;
   avg_wall_height_ft: number;
@@ -400,6 +408,18 @@ export interface EstimateSettingsBellyBand {
   manual_lf?: number | null;
 }
 
+export interface EstimateSettingsGableTopout {
+  include: boolean;
+  size?: string;
+  manual_lf?: number | null;
+}
+
+export interface EstimateSettingsTopout {
+  include: boolean;
+  size?: string;
+  manual_lf?: number | null;
+}
+
 export interface EstimateSettingsCorners {
   include_inside?: boolean;
   outside_count?: number | null;
@@ -464,6 +484,8 @@ export interface EstimateSettings {
   door_trim?: EstimateSettingsDoorTrim;
   top_out?: EstimateSettingsTopOut;
   belly_band?: EstimateSettingsBellyBand;
+  gable_topout?: EstimateSettingsGableTopout;
+  topout?: EstimateSettingsTopout;
   corners?: EstimateSettingsCorners;
   wrb?: EstimateSettingsWRB;
   flashing?: EstimateSettingsFlashing;

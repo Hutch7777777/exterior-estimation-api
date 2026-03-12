@@ -2658,6 +2658,16 @@ function getPresentationGroup(category?: string): string {
     'belly_band_fastener': 'Belly Band',
     'belly_band_caulk': 'Belly Band',
 
+    // Gable Topout
+    'gable_topout': 'Trim',
+    'gable_topout_trim': 'Trim',
+    'gable_topout_flashing': 'Trim',
+
+    // Topout
+    'topout': 'Trim',
+    'topout_trim': 'Trim',
+    'topout_flashing': 'Trim',
+
     // Soffit & Fascia
     'soffit': 'Soffit & Fascia',
     'soffit_panel': 'Soffit & Fascia',
@@ -2744,6 +2754,13 @@ function normalizePresentationGroup(group?: string): string {
     // Belly Band
     'belly band': 'Belly Band',
     'belly_band': 'Belly Band',
+
+    // Gable Topout
+    'gable_topout': 'Trim',
+    'gable topout': 'Trim',
+
+    // Topout
+    'topout': 'Trim',
 
     // Soffit & Fascia
     'soffit': 'Soffit & Fascia',
