@@ -48,9 +48,8 @@ export interface MeasurementContext {
   belly_band_count: number;
   belly_band_lf: number;
 
-  // Gable Topout
+  // Gable Topout (count-based - point per gable peak)
   gable_topout_count: number;
-  gable_topout_lf: number;
 
   // Topout
   topout_count: number;
@@ -411,7 +410,7 @@ export interface EstimateSettingsBellyBand {
 export interface EstimateSettingsGableTopout {
   include: boolean;
   size?: string;
-  manual_lf?: number | null;
+  manual_count?: number | null;
 }
 
 export interface EstimateSettingsTopout {

@@ -81,7 +81,7 @@ interface DbTriggerCondition {
   min_net_area?: number;
   min_facade_area?: number;
   min_belly_band_lf?: number;  // Trigger when belly_band_lf >= this value
-  min_gable_topout_lf?: number;  // Trigger when gable_topout_lf >= this value
+  min_gable_topout_count?: number;  // Trigger when gable_topout_count >= this value
   min_topout_lf?: number;  // Trigger when topout_lf >= this value
   // Trim triggers
   min_trim_total_lf?: number;  // Trigger when trim_total_lf >= this value
@@ -407,9 +407,8 @@ export function buildMeasurementContext(
     belly_band_count: get(['belly_band_count']),
     belly_band_lf: get(['belly_band_lf']),
 
-    // Gable Topout (from detection_counts in webhook)
+    // Gable Topout (count-based - point per gable peak)
     gable_topout_count: get(['gable_topout_count']),
-    gable_topout_lf: get(['gable_topout_lf']),
 
     // Topout (from detection_counts in webhook)
     topout_count: get(['topout_count']),
@@ -494,9 +493,9 @@ export function applyEstimateSettingsOverrides(
     overridesApplied.push(`belly_band_lf=${estimateSettings.belly_band.manual_lf}`);
   }
 
-  if (estimateSettings.gable_topout?.manual_lf != null) {
-    context.gable_topout_lf = estimateSettings.gable_topout.manual_lf;
-    overridesApplied.push(`gable_topout_lf=${estimateSettings.gable_topout.manual_lf}`);
+  if (estimateSettings.gable_topout?.manual_count != null) {
+    context.gable_topout_count = estimateSettings.gable_topout.manual_count;
+    overridesApplied.push(`gable_topout_count=${estimateSettings.gable_topout.manual_count}`);
   }
 
   if (estimateSettings.topout?.manual_lf != null) {
@@ -1521,12 +1520,12 @@ export function shouldApplyRule(
         matchedConditions.push(`belly_band>=${tc.min_belly_band_lf}`);
       }
 
-      // { "min_gable_topout_lf": N } - check gable topout linear feet
-      if (tc.min_gable_topout_lf !== undefined) {
-        if (context.gable_topout_lf < tc.min_gable_topout_lf) {
-          return { applies: false, reason: `gable_topout_lf=${context.gable_topout_lf} < ${tc.min_gable_topout_lf}` };
+      // { "min_gable_topout_count": N } - check gable topout count
+      if (tc.min_gable_topout_count !== undefined) {
+        if (context.gable_topout_count < tc.min_gable_topout_count) {
+          return { applies: false, reason: `gable_topout_count=${context.gable_topout_count} < ${tc.min_gable_topout_count}` };
         }
-        matchedConditions.push(`gable_topout>=${tc.min_gable_topout_lf}`);
+        matchedConditions.push(`gable_topout>=${tc.min_gable_topout_count}`);
       }
 
       // { "min_topout_lf": N } - check topout linear feet
