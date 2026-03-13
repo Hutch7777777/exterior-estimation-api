@@ -1160,7 +1160,7 @@ export async function calculateWithAutoScopeV2(
     const SIDING_INSTALLATION_CLASSES = ['siding', 'gable', 'exterior_wall', 'exterior wall', 'building', 'facade'];
 
     // Filter to ONLY include siding installation classes (whitelist approach)
-    const filteredMaterialAssignments = materialAssignments.filter(a => {
+    let filteredMaterialAssignments = materialAssignments.filter(a => {
       const cls = (a.detection_class || '').toLowerCase();
 
       // Only include if class matches a siding installation class
@@ -1174,13 +1174,57 @@ export async function calculateWithAutoScopeV2(
       return true;
     });
 
+    // =========================================================================
+    // V9.2.1: DEDUPLICATION - Prevent 2x area from overlapping polygon classes
+    // When both 'siding' and 'exterior_wall' polygons exist for the SAME material,
+    // they cover the same physical walls. Keep only 'siding' (more specific).
+    // =========================================================================
+    const EXTERIOR_WALL_CLASSES = ['exterior_wall', 'exterior wall', 'building', 'facade'];
+
+    // Find materials that have 'siding' class assignments
+    const materialsWithSiding = new Set(
+      filteredMaterialAssignments
+        .filter(a => (a.detection_class || '').toLowerCase() === 'siding')
+        .map(a => a.pricing_item_id)
+    );
+
+    if (materialsWithSiding.size > 0) {
+      const beforeDedup = filteredMaterialAssignments.length;
+      const dedupedArea = filteredMaterialAssignments
+        .filter(a => {
+          const cls = (a.detection_class || '').toLowerCase();
+          return EXTERIOR_WALL_CLASSES.includes(cls) && materialsWithSiding.has(a.pricing_item_id);
+        })
+        .filter(a => a.unit === 'SF')
+        .reduce((sum, a) => sum + (a.quantity || 0), 0);
+
+      filteredMaterialAssignments = filteredMaterialAssignments.filter(a => {
+        const cls = (a.detection_class || '').toLowerCase();
+        const matId = a.pricing_item_id;
+
+        // If this is an exterior_wall class AND the material also has siding assignments,
+        // exclude it to prevent double-counting
+        if (EXTERIOR_WALL_CLASSES.includes(cls) && materialsWithSiding.has(matId)) {
+          console.log(`   ⚠️ V9.2.1 DEDUP: Excluding '${a.detection_class}' (${a.quantity?.toFixed(1) || 0} ${a.unit}) for material ${matId} - siding polygons exist`);
+          return false;
+        }
+        return true;
+      });
+
+      const afterDedup = filteredMaterialAssignments.length;
+      if (beforeDedup !== afterDedup) {
+        console.log(`🔧 V9.2.1 DEDUP: Removed ${beforeDedup - afterDedup} overlapping exterior_wall/building assignments (${dedupedArea.toFixed(0)} SF excluded)`);
+        console.log(`   Materials with siding: ${[...materialsWithSiding].join(', ')}`);
+      }
+    }
+
     const removedCount = materialAssignments.length - filteredMaterialAssignments.length;
     if (removedCount > 0) {
       const removedArea = materialAssignments
         .filter(a => !filteredMaterialAssignments.includes(a))
         .filter(a => a.unit === 'SF')
         .reduce((sum, a) => sum + (a.quantity || 0), 0);
-      console.log(`🏭 [LineItems] Filtered ${materialAssignments.length} → ${filteredMaterialAssignments.length} (removed ${removedCount} non-siding classes, ${removedArea.toFixed(0)} SF excluded)`);
+      console.log(`🏭 [LineItems] Filtered ${materialAssignments.length} → ${filteredMaterialAssignments.length} (removed ${removedCount} total, ${removedArea.toFixed(0)} SF excluded)`);
     }
 
     // Batch fetch pricing for all assigned materials
@@ -1455,8 +1499,36 @@ export async function calculateWithAutoScopeV2(
     // Fixes: B&B and Artisan rules over-counting when only partial coverage assigned.
     // IMPORTANT: Use pricing.category from pricing_items (e.g., "board_batten"),
     // NOT the detection_class material_category from assigned_products.
+    //
+    // V9.2.1: Apply same deduplication to prevent 2x area from overlapping classes
     // =========================================================================
+
+    // V9.2.1: Deduplicate before calculating category areas
+    const SIDING_INSTALLATION_CLASSES_FOR_AREAS = ['siding', 'gable', 'exterior_wall', 'exterior wall', 'building', 'facade'];
+    const EXTERIOR_WALL_CLASSES_FOR_AREAS = ['exterior_wall', 'exterior wall', 'building', 'facade'];
+
+    // Find materials that have 'siding' class assignments
+    const materialsWithSidingForAreas = new Set(
+      materialAssignments
+        .filter(a => (a.detection_class || '').toLowerCase() === 'siding')
+        .map(a => a.pricing_item_id)
+    );
+
     for (const assignment of materialAssignments) {
+      // V9.2.1: Skip exterior_wall/building if siding exists for this material
+      const cls = (assignment.detection_class || '').toLowerCase();
+      const matId = assignment.pricing_item_id;
+
+      // Skip if not a siding installation class
+      const isSidingInstallation = SIDING_INSTALLATION_CLASSES_FOR_AREAS.some(sc => cls.includes(sc));
+      if (!isSidingInstallation) continue;
+
+      // Skip if this is exterior_wall/building AND siding exists for this material
+      if (EXTERIOR_WALL_CLASSES_FOR_AREAS.includes(cls) && materialsWithSidingForAreas.has(matId)) {
+        console.log(`   ⚠️ V9.2.1 DEDUP (category areas): Excluding '${cls}' for material ${matId}`);
+        continue;
+      }
+
       // Reuse the pricing lookup we already did above
       const pricing = pricingMapForAutoScope.get(assignment.pricing_item_id);
       if (!pricing?.category) continue;
