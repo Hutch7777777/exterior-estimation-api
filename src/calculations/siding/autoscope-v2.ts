@@ -308,11 +308,24 @@ export function buildMeasurementContext(
 
   // =========================================================================
   // Map ACTUAL database column names from cad_hover_measurements
+  // FIX: Added 'facade_area_sqft' which is sent by the webhook from DetectionEditor
+  // This is the authoritative pre-calculated value that already de-duplicates
+  // overlapping exterior_wall + siding polygon classes
   // =========================================================================
 
-  // Primary areas - DB uses facade_total_sqft, net_siding_sqft
-  const facade_sqft = get(['facade_total_sqft', 'facade_sqft', 'gross_wall_area_sqft']);
+  // Primary areas - DB uses facade_total_sqft, webhook sends facade_area_sqft
+  // Priority: facade_area_sqft (webhook) > facade_total_sqft (DB) > facade_sqft > gross_wall_area_sqft
+  const facade_sqft = get(['facade_area_sqft', 'facade_total_sqft', 'facade_sqft', 'gross_wall_area_sqft']);
   const net_siding_sqft = get(['net_siding_sqft', 'net_siding_area_sqft', 'net_wall_area_sqft']);
+
+  // 🎯 DEBUG: Log facade source to trace any doubling issues
+  console.log('🎯 FACADE_SOURCE:', {
+    from_webhook_facade_area_sqft: wh.facade_area_sqft,
+    from_webhook_facade_sqft: wh.facade_sqft,
+    from_db_facade_total_sqft: db.facade_total_sqft,
+    from_db_facade_sqft: db.facade_sqft,
+    using: facade_sqft,
+  });
 
   // Openings - DB has pre-computed totals
   const openings_area_sqft = get(['openings_area_sqft']);
@@ -1908,6 +1921,10 @@ export async function generateAutoScopeItemsV2(
   // FALLBACK: Reconstruct facade_area_sqft from manufacturer groups if empty
   // This handles cases where neither DB nor webhook has aggregate measurements
   // but we DO have per-material measurements from spatial containment
+  //
+  // ⚠️ WARNING: This fallback can cause DOUBLING if manufacturer groups include
+  // both exterior_wall AND siding classes covering the same physical walls!
+  // The preferred path is to use facade_area_sqft from the webhook payload.
   // =========================================================================
   if (totalContext.facade_area_sqft === 0 && Object.keys(manufacturerGroups).length > 0) {
     let totalArea = 0;
@@ -1917,7 +1934,9 @@ export async function generateAutoScopeItemsV2(
       totalPerimeter += data.linear_ft || 0;
     }
     if (totalArea > 0) {
-      console.log(`⚠️ [AutoScope] FALLBACK: Reconstructing totalContext from ${Object.keys(manufacturerGroups).length} manufacturer groups`);
+      console.warn(`⚠️ [AutoScope] FALLBACK TRIGGERED: Reconstructing totalContext from ${Object.keys(manufacturerGroups).length} manufacturer groups`);
+      console.warn(`   ⚠️ This may cause doubling if exterior_wall + siding classes overlap!`);
+      console.warn(`   ⚠️ Preferred: webhook should send facade_area_sqft from cad_hover_measurements`);
       console.log(`   Total area from manufacturers: ${totalArea.toFixed(2)} SF`);
       console.log(`   Total perimeter from manufacturers: ${totalPerimeter.toFixed(2)} LF`);
       totalContext.facade_area_sqft = totalArea;
@@ -1930,6 +1949,8 @@ export async function generateAutoScopeItemsV2(
         console.log(`   Estimated perimeter: ${totalContext.facade_perimeter_lf.toFixed(2)} LF (area / height)`);
       }
     }
+  } else if (totalContext.facade_area_sqft > 0) {
+    console.log(`✅ [AutoScope] Using authoritative facade_area_sqft=${totalContext.facade_area_sqft.toFixed(2)} SF (no fallback needed)`);
   }
 
   // Phase 2B: Apply estimate_settings overrides to measurement context
