@@ -105,6 +105,13 @@ interface DbTriggerCondition {
   // e.g., "consumables.include_wood_blades" resolves to configuration_data.consumables.include_wood_blades
   // When path resolves to explicit false, rule is suppressed
   config_toggle?: string;
+  // V10.1: Config match - string equality check against estimateSettings
+  // e.g., { "path": "flashing.window_head", "value": "z_flashing" }
+  // Rule only fires when the resolved path value equals the expected value
+  config_match?: {
+    path: string;   // Dot-notation path (e.g., "flashing.window_head")
+    value: string;  // Expected value (e.g., "z_flashing")
+  };
 }
 
 // Exclusion condition format for excludes_if_attributes
@@ -165,6 +172,32 @@ export function resolveConfigToggle(
   if (value === false || value === 'false') return false;
   if (value === true || value === 'true') return true;
   return undefined;
+}
+
+/**
+ * Resolve a dot-notation path to any value (not just booleans).
+ * Used by config_match for string equality checks.
+ *
+ * @example
+ * resolveConfigValue({ flashing: { window_head: 'z_flashing' } }, 'flashing.window_head')
+ * // Returns: 'z_flashing'
+ */
+export function resolveConfigValue(
+  configData: Record<string, unknown> | null | undefined,
+  path: string
+): unknown {
+  if (!configData || !path) return undefined;
+
+  const parts = path.split('.');
+  let current: unknown = configData;
+
+  for (const part of parts) {
+    if (current === null || current === undefined) return undefined;
+    if (typeof current !== 'object') return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+
+  return current;
 }
 
 // ============================================================================
@@ -1532,6 +1565,36 @@ export function shouldApplyRule(
         };
       }
       matchedConditions.push(`config.${tc.field}=${tc.equals}`);
+    }
+
+    // =========================================================================
+    // CONFIG MATCH CHECK - String equality for config path values
+    // Format: { "config_match": { "path": "flashing.window_head", "value": "z_flashing" } }
+    // Rule only fires when the resolved path equals the expected value.
+    // This is ALWAYS checked regardless of "always" flag.
+    // =========================================================================
+    if (tc.config_match) {
+      const { path, value } = tc.config_match;
+      const actualValue = resolveConfigValue(estimateSettings as Record<string, unknown>, path);
+
+      console.log('🔍 config_match check:', {
+        rule: rule.rule_name || rule.rule_id,
+        path,
+        expected: value,
+        actual: actualValue,
+        estimateSettingsKeys: estimateSettings ? Object.keys(estimateSettings) : 'null',
+      });
+
+      if (actualValue !== undefined && actualValue !== null) {
+        if (String(actualValue) !== value) {
+          console.log(`🔀 Rule ${rule.rule_id}: ${rule.rule_name} — SKIPPED (config_match failed)`);
+          return {
+            applies: false,
+            reason: `config_match failed: ${path}=${actualValue}, expected ${value}`
+          };
+        }
+        matchedConditions.push(`config_match=${path}:${value}`);
+      }
     }
 
     // =========================================================================
