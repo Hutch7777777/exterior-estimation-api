@@ -13,6 +13,7 @@ import {
   buildMeasurementContext,
   buildManufacturerGroups,
   buildAssignedMaterialsFromPricing,
+  resolveConfigToggle,
 } from './autoscope-v2';
 import { AutoScopeLineItem, MaterialCategoryAreas } from '../../types/autoscope';
 import { getSupabaseClient, getSupabaseServiceClient, isDatabaseConfigured } from '../../services/database';
@@ -1587,12 +1588,15 @@ export async function calculateWithAutoScopeV2(
   // =========================================================================
   // BELLY BAND SUPPORTING MATERIALS
   // Generate additional items when belly band detections are present
+  // Skip entirely if estimateSettings.belly_band.include is explicitly false
   // =========================================================================
   const bellyBandLf = detectionCounts?.belly_band?.total_lf || 0;
+  const bellyBandInclude = resolveConfigToggle(estimateSettings as Record<string, any>, 'belly_band.include');
   console.log('📏 Belly Band LF value:', bellyBandLf, '(type:', typeof bellyBandLf, ')');
-  console.log('📏 Will generate belly band items:', bellyBandLf > 0);
+  console.log('📏 Belly Band include toggle:', bellyBandInclude);
+  console.log('📏 Will generate belly band items:', bellyBandLf > 0 && bellyBandInclude !== false);
 
-  if (bellyBandLf > 0) {
+  if (bellyBandLf > 0 && bellyBandInclude !== false) {
     console.log(`✅ GENERATING BELLY BAND ITEMS for ${bellyBandLf.toFixed(1)} LF`);
 
     // Constants for belly band calculations
@@ -1713,6 +1717,8 @@ export async function calculateWithAutoScopeV2(
     totalMaterialCost += caulkExtended;
 
     console.log(`🎀 Added ${5} belly band items totaling $${(boardExtended + zFlashingExtended + dripEdgeExtended + nailsExtended + caulkExtended).toFixed(2)}`);
+  } else if (bellyBandLf > 0 && bellyBandInclude === false) {
+    console.log(`🔕 Belly Band items SUPPRESSED — belly_band.include is explicitly false (${bellyBandLf.toFixed(1)} LF detected but skipped)`);
   }
 
   // Debug: Log belly band items in lineItems

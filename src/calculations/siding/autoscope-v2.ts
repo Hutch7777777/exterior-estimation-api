@@ -145,7 +145,7 @@ function isTrue(value: unknown): boolean {
  * resolveConfigToggle({ consumables: { include_wood_blades: false } }, 'consumables.include_wood_blades')
  * // Returns: false
  */
-function resolveConfigToggle(
+export function resolveConfigToggle(
   configData: Record<string, any> | null | undefined,
   togglePath: string
 ): boolean | undefined {
