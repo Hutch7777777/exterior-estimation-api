@@ -101,6 +101,10 @@ interface DbTriggerCondition {
   // V9.0: Trim system toggle - controls which trim/flashing rules fire
   // WhiteWood rules have { "trim_system": "whitewood", "always": true }
   trim_system?: 'hardie' | 'whitewood';
+  // V10.0: Config toggle - dot-notation path into project configuration_data
+  // e.g., "consumables.include_wood_blades" resolves to configuration_data.consumables.include_wood_blades
+  // When path resolves to explicit false, rule is suppressed
+  config_toggle?: string;
 }
 
 // Exclusion condition format for excludes_if_attributes
@@ -130,6 +134,37 @@ function isFalse(value: unknown): boolean {
  */
 function isTrue(value: unknown): boolean {
   return value === true || value === 'true';
+}
+
+/**
+ * Resolve a dot-notation path in the project configuration JSONB.
+ * Returns: true, false, or undefined (if path doesn't exist).
+ * Used by shouldApplyRule() to check config_toggle values.
+ *
+ * @example
+ * resolveConfigToggle({ consumables: { include_wood_blades: false } }, 'consumables.include_wood_blades')
+ * // Returns: false
+ */
+function resolveConfigToggle(
+  configData: Record<string, any> | null | undefined,
+  togglePath: string
+): boolean | undefined {
+  if (!configData || !togglePath) return undefined;
+
+  const parts = togglePath.split('.');
+  let value: any = configData;
+
+  for (const part of parts) {
+    if (value === null || value === undefined || typeof value !== 'object') {
+      return undefined;
+    }
+    value = value[part];
+  }
+
+  // Handle JSONB boolean/string type mismatches from Supabase
+  if (value === false || value === 'false') return false;
+  if (value === true || value === 'true') return true;
+  return undefined;
 }
 
 // ============================================================================
@@ -1205,6 +1240,26 @@ export function shouldApplyRule(
   const matchedConditions: string[] = [];
 
   // =========================================================================
+  // CONFIG TOGGLE CHECK — runs FIRST, before ALL other checks including "always"
+  // This uses dot-notation paths like "consumables.include_wood_blades" to resolve
+  // values from project_configurations.configuration_data (passed as estimateSettings)
+  // undefined/null = fire (backwards compatible), explicit false = suppress
+  // =========================================================================
+  if (tc?.config_toggle && estimateSettings) {
+    const toggleValue = resolveConfigToggle(estimateSettings as Record<string, any>, tc.config_toggle);
+    if (toggleValue === false) {
+      return {
+        applies: false,
+        reason: `config_toggle "${tc.config_toggle}" is explicitly false`
+      };
+    }
+    // If toggle is true or undefined, continue with other checks
+    if (toggleValue === true) {
+      matchedConditions.push(`toggle=${tc.config_toggle}`);
+    }
+  }
+
+  // =========================================================================
   // PHASE 2B: ESTIMATE SETTINGS TOGGLE CHECKS
   // Pattern: setting === false means SKIP. undefined/null = fire (backwards compat)
   // =========================================================================
@@ -2063,7 +2118,12 @@ export async function generateAutoScopeItemsV2(
         }
       } else {
         result.rules_skipped.push(`${rule.material_sku}: ${reason}`);
-        console.log(`  ✗ Rule ${rule.rule_id}: ${rule.rule_name} → skipped (${reason})`);
+        // Special logging for config_toggle suppression
+        if (reason.includes('config_toggle')) {
+          console.log(`🔕 Rule ${rule.rule_id}: ${rule.rule_name} — SUPPRESSED by toggle: ${rule.trigger_condition?.config_toggle}`);
+        } else {
+          console.log(`  ✗ Rule ${rule.rule_id}: ${rule.rule_name} → skipped (${reason})`);
+        }
       }
     } else {
       // =====================================================================
@@ -2133,7 +2193,12 @@ export async function generateAutoScopeItemsV2(
           }
         } else {
           result.rules_skipped.push(`${rule.material_sku} [${mfrName}]: ${reason}`);
-          console.log(`  ✗ Rule ${rule.rule_id}: ${rule.rule_name} [${mfrName}] → skipped (${reason})`);
+          // Special logging for config_toggle suppression
+          if (reason.includes('config_toggle')) {
+            console.log(`🔕 Rule ${rule.rule_id}: ${rule.rule_name} [${mfrName}] — SUPPRESSED by toggle: ${rule.trigger_condition?.config_toggle}`);
+          } else {
+            console.log(`  ✗ Rule ${rule.rule_id}: ${rule.rule_name} [${mfrName}] → skipped (${reason})`);
+          }
         }
       }
     }
