@@ -1514,6 +1514,15 @@ export async function calculateWithAutoScopeV2(
     null
   ) as string | null;
 
+  // DEBUG: Trace trim_system resolution
+  console.log('🔧 [TRIM_SYSTEM DEBUG]:', {
+    from_db_estimate_settings: config?.estimate_settings?.trim_system,
+    from_config_trim_system: config?.trim_system,
+    resolved_value: trimSystem,
+    projectId: projectId || 'NOT PROVIDED',
+    dbEstimateSettings_loaded: !!dbEstimateSettings,
+    dbEstimateSettings_trim_system: dbEstimateSettings?.trim_system,
+  });
   console.log(`🔧 Trim system: ${trimSystem}`);
   console.log(`🔧 WRB product: ${wrbProduct || 'not specified'}`);
 
