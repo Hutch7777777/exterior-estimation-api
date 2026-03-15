@@ -1498,11 +1498,21 @@ export async function calculateWithAutoScopeV2(
 
   // =========================================================================
   // V9.0: Extract trim system and WRB product from config
+  // Priority: DB settings (estimate_settings) > webhook payload > default
   // Frontend sends: config.trim_system = 'hardie' | 'whitewood'
   // Frontend sends: config.wrb_product = 'henry-jumbotex' | 'henry-hydrotex' | etc.
   // =========================================================================
-  const trimSystem = (config?.trim_system as 'hardie' | 'whitewood') || 'hardie';
-  const wrbProduct = config?.wrb_product as string | null || null;
+  const trimSystem = (
+    config?.estimate_settings?.trim_system ||  // DB settings (merged above)
+    config?.trim_system ||                      // Webhook payload
+    'hardie'                                    // Default
+  ) as 'hardie' | 'whitewood';
+  const wrbProduct = (
+    config?.estimate_settings?.wrb_product ||
+    config?.estimate_settings?.wrb?.product ||
+    config?.wrb_product ||
+    null
+  ) as string | null;
 
   console.log(`🔧 Trim system: ${trimSystem}`);
   console.log(`🔧 WRB product: ${wrbProduct || 'not specified'}`);
