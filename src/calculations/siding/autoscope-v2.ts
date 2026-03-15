@@ -411,17 +411,6 @@ export function buildMeasurementContext(
   const inside_corner_lf = get(['corners_inside_lf', 'inside_corner_lf', 'inside_corners_lf'])
     || Number(wh.corners?.inside_lf) || 0;
 
-  // DEBUG: Log corner values resolution
-  console.log('🔧 [CORNERS DEBUG]:', {
-    outside_corners_count,
-    outside_corner_lf,
-    inside_corners_count,
-    inside_corner_lf,
-    from_db_corners_outside_lf: db.corners_outside_lf,
-    from_wh_corners_outside_lf: wh.corners_outside_lf,
-    from_wh_corners_nested: wh.corners?.outside_lf,
-  });
-
   // Other
   const level_starter_lf = get(['level_starter_lf']);
   const avg_wall_height_ft = get(['avg_wall_height_ft'], 10); // Default 10ft if null
@@ -555,18 +544,6 @@ export function buildMeasurementContext(
     facade_height_ft: ctx.facade_height_ft,
     level_starter_lf: ctx.level_starter_lf,
   });
-
-  // LOG 1: Corner values for debugging WW corner rules 181-183
-  console.log('🔧 [MEASUREMENT_CONTEXT] Corner values:', JSON.stringify({
-    outside_corner_lf: ctx.outside_corner_lf,
-    outside_corners_count: ctx.outside_corners_count,
-    outside_corner_count: ctx.outside_corner_count,
-    inside_corner_lf: ctx.inside_corner_lf,
-    inside_corners_count: ctx.inside_corners_count,
-    inside_corner_count: ctx.inside_corner_count,
-    facade_height_ft: ctx.facade_height_ft,
-    total_corner_lf: ctx.total_corner_lf,
-  }));
 
   return ctx;
 }

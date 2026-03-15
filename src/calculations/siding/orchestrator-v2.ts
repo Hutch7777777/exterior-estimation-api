@@ -186,7 +186,7 @@ export interface CombinedLineItem {
   is_colorplus?: boolean;  // Flag for ColorPlus premium labor
 
   // Metadata
-  calculation_source: 'assigned_material' | 'auto-scope';
+  calculation_source: 'assigned_material' | 'auto-scope' | 'bluebeam_unmatched';
   pricing_item_id?: string;
   detection_id?: string;
   detection_ids?: string[];
@@ -666,7 +666,6 @@ function calculateOverhead(
   console.log(`   Crew size: ${crewSize}, Estimated weeks: ${estimatedWeeks}`);
   console.log(`   L&I Rate: $${liHourlyRate}/hr ${orgConfig?.li_hourly_rate ? '(from org config)' : '(default)'}`);
   console.log(`   Include Dumpster: ${includeDumpster}, Include Toilet: ${includeToilet}`);
-  console.log(`   [DEBUG] orgConfig?.include_toilet raw value: ${JSON.stringify(orgConfig?.include_toilet)} (type: ${typeof orgConfig?.include_toilet})`);
   console.log(`   Installation labor subtotal: $${installationLaborSubtotal.toFixed(2)}`);
 
   const overheadItems: OverheadLineItem[] = [];
@@ -697,7 +696,6 @@ function calculateOverhead(
                          costNameLower.includes('potty') ||
                          costNameLower.includes('sanitation') ||
                          costNameLower.includes('restroom');
-    console.log(`   [DEBUG] Processing "${cost.cost_name}" - isToiletItem: ${isToiletItem}, includeToilet: ${includeToilet}, shouldSkip: ${isToiletItem && !includeToilet}`);
     if (isToiletItem && !includeToilet) {
       console.log(`   ⏭️ Skipping ${cost.cost_name} (org config: include_toilet=false)`);
       continue;
@@ -1514,15 +1512,6 @@ export async function calculateWithAutoScopeV2(
     null
   ) as string | null;
 
-  // DEBUG: Trace trim_system resolution
-  console.log('🔧 [TRIM_SYSTEM DEBUG]:', {
-    from_db_estimate_settings: config?.estimate_settings?.trim_system,
-    from_config_trim_system: config?.trim_system,
-    resolved_value: trimSystem,
-    projectId: projectId || 'NOT PROVIDED',
-    dbEstimateSettings_loaded: !!dbEstimateSettings,
-    dbEstimateSettings_trim_system: dbEstimateSettings?.trim_system,
-  });
   console.log(`🔧 Trim system: ${trimSystem}`);
   console.log(`🔧 WRB product: ${wrbProduct || 'not specified'}`);
 
@@ -2305,39 +2294,22 @@ export async function calculateWithAutoScopeV2(
   const hoseBibCount = detectionCounts?.hose_bib?.count || 0;
   const lightFixtureCount = detectionCounts?.light_fixture?.count || 0;
 
-  // DEBUG: Log materialAssignments to understand structure
-  console.log(`[DEBUG] materialAssignments received: ${materialAssignments?.length || 0} items`);
-  if (materialAssignments && materialAssignments.length > 0) {
-    console.log('[DEBUG] First materialAssignment structure:', JSON.stringify(materialAssignments[0], null, 2));
-    console.log('[DEBUG] All assignment classes:', materialAssignments.map((ma: any) =>
-      ma.detection_class || ma.class || ma.detectionClass || 'NO_CLASS'
-    ).join(', '));
-  }
-
   // Helper function to count material assignments for a detection class
   // Checks multiple property names for compatibility with different payload formats
   const getAssignedCount = (detectionClass: string): number => {
     if (!materialAssignments || !Array.isArray(materialAssignments)) {
-      console.log(`[DEBUG] No materialAssignments array for class: ${detectionClass}`);
       return 0;
     }
 
     const assignmentsForClass = materialAssignments.filter((ma: any) => {
       // Check all possible property names for detection class
       const maClass = (ma.detection_class || ma.class || ma.detectionClass || '').toLowerCase();
-      const matches = maClass === detectionClass.toLowerCase();
-      if (matches) {
-        console.log(`[DEBUG] Found matching assignment for ${detectionClass}:`, ma);
-      }
-      return matches;
+      return maClass === detectionClass.toLowerCase();
     });
 
-    const count = assignmentsForClass.reduce(
+    return assignmentsForClass.reduce(
       (sum: number, ma: any) => sum + (ma.quantity || ma.count || ma.qty || 1), 0
     );
-
-    console.log(`[DEBUG] getAssignedCount('${detectionClass}'): found ${assignmentsForClass.length} assignments, total count: ${count}`);
-    return count;
   };
 
   // Calculate unassigned penetrations (those without manual material assignments)
@@ -2465,13 +2437,6 @@ export async function calculateWithAutoScopeV2(
   // WRB covers the entire wall including areas behind openings
   // Cast to any to check all possible property names since types may not be complete
   const wmLabor = webhookMeasurements as any;
-
-  console.log(`   [DEBUG] webhookMeasurements keys: ${Object.keys(wmLabor || {}).join(', ')}`);
-  console.log(`   [DEBUG] wmLabor.facade_area_sqft: ${wmLabor?.facade_area_sqft}`);
-  console.log(`   [DEBUG] wmLabor.facade_sqft: ${wmLabor?.facade_sqft}`);
-  console.log(`   [DEBUG] wmLabor.facade_total_sqft: ${wmLabor?.facade_total_sqft}`);
-  console.log(`   [DEBUG] wmLabor.gross_wall_area_sqft: ${wmLabor?.gross_wall_area_sqft}`);
-  console.log(`   [DEBUG] wmLabor.net_siding_area_sqft: ${wmLabor?.net_siding_area_sqft}`);
 
   const facadeAreaSqft = wmLabor?.facade_area_sqft ||      // MeasurementContext uses this
     wmLabor?.facade_sqft ||                                 // WebhookMeasurements type has this
@@ -2616,6 +2581,42 @@ export async function calculateWithAutoScopeV2(
 
   // Update overhead subtotal to include project insurance
   const overheadTotalWithInsurance = overheadSubtotal + projectTotals.project_insurance;
+
+  // =========================================================================
+  // UNMATCHED BLUEBEAM ITEMS — Safety net for unmapped subjects
+  // Items with bluebeam_content but no assigned_material_id flow through as
+  // flagged $0 line items so nothing gets silently dropped.
+  // =========================================================================
+  const unmatchedItems = config?.unmatched_bluebeam_items || [];
+  if (unmatchedItems.length > 0) {
+    console.log(`⚠️ [UNMATCHED] Processing ${unmatchedItems.length} unmatched Bluebeam items`);
+
+    for (const item of unmatchedItems) {
+      const isCountBased = item.total_item_count > 0;
+      const quantity = isCountBased ? item.total_item_count : Math.ceil(item.total_area_sf);
+      const unit = isCountBased ? 'ea' : 'sf';
+
+      if (quantity <= 0) continue; // Skip zero-quantity items
+
+      lineItems.push({
+        description: `⚠️ ${item.bluebeam_content} (VERIFY PRICING)`,
+        sku: 'UNMATCHED',
+        quantity: quantity,
+        unit: unit,
+        category: 'unmatched',
+        presentation_group: 'Unmatched Items',
+        material_unit_cost: 0,
+        material_extended: 0,
+        labor_unit_cost: 0,
+        labor_extended: 0,
+        total_extended: 0,
+        calculation_source: 'bluebeam_unmatched',
+        notes: `Bluebeam class: ${item.class} | ${item.annotation_count} annotations | Needs material assignment`,
+      });
+
+      console.log(`   ⚠️ Added unmatched: "${item.bluebeam_content}" × ${quantity} ${unit}`);
+    }
+  }
 
   // =========================================================================
   // PART 4: Build Result
