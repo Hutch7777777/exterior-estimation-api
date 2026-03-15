@@ -556,6 +556,18 @@ export function buildMeasurementContext(
     level_starter_lf: ctx.level_starter_lf,
   });
 
+  // LOG 1: Corner values for debugging WW corner rules 181-183
+  console.log('🔧 [MEASUREMENT_CONTEXT] Corner values:', JSON.stringify({
+    outside_corner_lf: ctx.outside_corner_lf,
+    outside_corners_count: ctx.outside_corners_count,
+    outside_corner_count: ctx.outside_corner_count,
+    inside_corner_lf: ctx.inside_corner_lf,
+    inside_corners_count: ctx.inside_corners_count,
+    inside_corner_count: ctx.inside_corner_count,
+    facade_height_ft: ctx.facade_height_ft,
+    total_corner_lf: ctx.total_corner_lf,
+  }));
+
   return ctx;
 }
 
@@ -1284,6 +1296,19 @@ export function shouldApplyRule(
   const tc = rule.trigger_condition;
   const materials = assignedMaterials || [];
   const currentTrimSystem = trimSystem || 'hardie';
+
+  // LOG 2: Debug WW corner rules 181-183
+  if (rule.rule_id && [181, 182, 183].includes(rule.rule_id)) {
+    console.log(`🔧 [RULE ${rule.rule_id}] ${rule.rule_name}:`, JSON.stringify({
+      trigger_condition: rule.trigger_condition,
+      trim_system_resolved: currentTrimSystem,
+      trim_system_match: currentTrimSystem === tc?.trim_system,
+      min_corners_check: (tc?.min_corners || 0) <= ((context.outside_corners_count || 0) + (context.inside_corners_count || 0)),
+      outside_corner_lf: context.outside_corner_lf,
+      inside_corner_lf: context.inside_corner_lf,
+      formula: rule.quantity_formula,
+    }));
+  }
 
   // Track matched conditions for reason string
   const matchedConditions: string[] = [];
