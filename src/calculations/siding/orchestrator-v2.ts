@@ -2210,6 +2210,92 @@ export async function calculateWithAutoScopeV2(
   }
 
   // =========================================================================
+  // DIRECT WHITEWOOD CORNER GENERATION
+  // Bypasses auto-scope rules 181-183 which have a measurement context bug
+  // =========================================================================
+  if (trimSystem === 'whitewood') {
+    const osCornerCount = (webhookMeasurements as any)?.corners?.outside_count
+      || (webhookMeasurements as any)?.outside_corners_count
+      || 0;
+    const isCornerCount = (webhookMeasurements as any)?.corners?.inside_count
+      || (webhookMeasurements as any)?.inside_corners_count
+      || 0;
+    const wallHeight = (webhookMeasurements as any)?.avg_wall_height_ft || 10;
+
+    if (osCornerCount > 0) {
+      const osCornerLf = osCornerCount * wallHeight;
+      const pcs1x3 = Math.ceil(osCornerLf / 12 * 1.05);
+      const pcs1x4 = Math.ceil(osCornerLf / 12 * 1.05);
+
+      console.log(`📦 WW O/S Corners: ${osCornerCount} corners × ${wallHeight}ft = ${osCornerLf} LF → ${pcs1x3}pc 1x3 + ${pcs1x4}pc 1x4`);
+
+      const ext1x3 = pcs1x3 * 7.82;
+      lineItems.push({
+        description: '1x3 WhiteWood O/S Corner 12ft',
+        sku: 'WW-1X3-12',
+        quantity: pcs1x3,
+        unit: 'pieces',
+        category: 'corner',
+        presentation_group: 'Trim & Corners',
+        item_order: 50,
+        material_unit_cost: 7.82,
+        material_extended: ext1x3,
+        labor_unit_cost: 0,
+        labor_extended: 0,
+        total_extended: ext1x3,
+        calculation_source: 'auto-scope',
+        notes: `${osCornerCount} O/S corners × ${wallHeight}ft ÷ 12ft × 1.05 waste`,
+      });
+      totalMaterialCost += ext1x3;
+
+      const ext1x4 = pcs1x4 * 9.37;
+      lineItems.push({
+        description: '1x4 WhiteWood O/S Corner 12ft',
+        sku: 'WW-1X4-12',
+        quantity: pcs1x4,
+        unit: 'pieces',
+        category: 'corner',
+        presentation_group: 'Trim & Corners',
+        item_order: 51,
+        material_unit_cost: 9.37,
+        material_extended: ext1x4,
+        labor_unit_cost: 0,
+        labor_extended: 0,
+        total_extended: ext1x4,
+        calculation_source: 'auto-scope',
+        notes: `${osCornerCount} O/S corners × ${wallHeight}ft ÷ 12ft × 1.05 waste`,
+      });
+      totalMaterialCost += ext1x4;
+    }
+
+    if (isCornerCount > 0) {
+      const isCornerLf = isCornerCount * wallHeight;
+      const pcs2x2 = Math.ceil(isCornerLf / 20 * 1.05);
+
+      console.log(`📦 WW I/S Corners: ${isCornerCount} corners × ${wallHeight}ft = ${isCornerLf} LF → ${pcs2x2}pc 2x2`);
+
+      const ext2x2 = pcs2x2 * 10.42;
+      lineItems.push({
+        description: '2x2 WhiteWood I/S Corner 20ft',
+        sku: 'WW-2X2-20',
+        quantity: pcs2x2,
+        unit: 'pieces',
+        category: 'corner',
+        presentation_group: 'Trim & Corners',
+        item_order: 52,
+        material_unit_cost: 10.42,
+        material_extended: ext2x2,
+        labor_unit_cost: 0,
+        labor_extended: 0,
+        total_extended: ext2x2,
+        calculation_source: 'auto-scope',
+        notes: `${isCornerCount} I/S corners × ${wallHeight}ft ÷ 20ft × 1.05 waste`,
+      });
+      totalMaterialCost += ext2x2;
+    }
+  }
+
+  // =========================================================================
   // PENETRATION FLASHING - Vents, Outlets, Hose Bibs, Light Fixtures
   // Skip auto-scope flashing for detections that have manual material assignments
   // =========================================================================
