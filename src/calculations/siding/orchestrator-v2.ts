@@ -2019,11 +2019,11 @@ export async function calculateWithAutoScopeV2(
 
   if (corbelCount > 0) {
     console.log(`✅ GENERATING CORBEL ITEMS for ${corbelCount} corbels`);
-    const corbelCost = 45.00;
+    const corbelCost = 147.00;  // Glu-Lam Corbel Assembly - matches office takeoff
     const corbelExtended = corbelCount * corbelCost;
     lineItems.push({
-      description: 'Decorative Corbel - Primed',
-      sku: 'CORBEL-DECORATIVE',
+      description: 'Glu-Lam Corbel Assembly',
+      sku: 'CORBEL-GLULAM',
       quantity: corbelCount,
       unit: 'ea',
       category: 'corbel',
@@ -2130,6 +2130,64 @@ export async function calculateWithAutoScopeV2(
       notes: `Column wraps from detection: ${columnCount} columns`,
     });
     totalMaterialCost += columnExtended;
+  }
+
+  // =========================================================================
+  // GENERIC BLUEBEAM COUNT ITEMS
+  // Process any detection_counts keys not handled by hardcoded blocks above
+  // These come from Bluebeam imports with bluebeam_content labels
+  // =========================================================================
+  const handledDetectionKeys = new Set([
+    'corbel', 'bracket', 'shutter', 'post', 'column', 'belly_band',
+    'soffit', 'fascia', 'gutter', 'downspout', 'gable_topout',
+    'vent', 'gable_vent', 'outlet', 'hose_bib', 'light_fixture'
+  ]);
+
+  const bluebeamPricing: Record<string, { sku: string; description: string; material_cost: number; presentation_group: string }> = {
+    '1" x 6" WW Trim Count': { sku: 'WW-1X6-20', description: '1x6 WhiteWood Trim 20ft', material_cost: 26.06, presentation_group: 'Window Trims' },
+    '2" x 12" x 20\' Trim Count': { sku: 'WW-2X12-20', description: '2x12 WhiteWood Belly Band 20ft', material_cost: 72.37, presentation_group: 'Horizontal Trims' },
+    '2" x 3" Trim Count': { sku: 'WW-2X3-12', description: '2x3 WhiteWood Slope Sill 12ft', material_cost: 12.98, presentation_group: 'Window Trims' },
+    '2" x 2" x 20" Trim Count': { sku: 'WW-2X2-20', description: '2x2 WhiteWood Trim 20ft', material_cost: 10.42, presentation_group: 'Trim & Corners' },
+    '4/4" x 8" Trim Count': { sku: 'HT-44-8-12-PR', description: 'HardieTrim 4/4 x 8 x 12ft Primed', material_cost: 18.50, presentation_group: 'Trim & Corners' },
+    'Corbel Count': { sku: 'CORBEL-GLULAM', description: 'Glu-Lam Corbel Assembly', material_cost: 147.00, presentation_group: 'Other Materials' },
+    'Window Head Flashing Count': { sku: 'FLASH-HEAD-WIN', description: 'Window Head Flashing 3ft', material_cost: 5.46, presentation_group: 'Flashing & Weatherproofing' },
+    'Garage Door Head Flashing Count': { sku: 'FLASH-HEAD-GAR', description: 'Garage Door Head Flashing', material_cost: 6.58, presentation_group: 'Flashing & Weatherproofing' },
+    'Swing Door Head Flashing Count': { sku: 'FLASH-HEAD-DOOR', description: 'Door Head Flashing 3ft', material_cost: 5.46, presentation_group: 'Flashing & Weatherproofing' },
+    'Foundation Vent Count': { sku: 'VENT-FOUNDATION', description: 'Foundation Vent', material_cost: 12.00, presentation_group: 'Other Materials' },
+    '1" x 3" Top-Out Trim': { sku: 'WW-1X3-12', description: '1x3 WhiteWood Top-Out 12ft', material_cost: 7.82, presentation_group: 'Trim & Corners' },
+    '1" x 2" WW Trim': { sku: 'WW-1X2-16', description: '1x2 WhiteWood Top-Out 16ft', material_cost: 7.05, presentation_group: 'Trim & Corners' },
+  };
+
+  if (detectionCounts) {
+    for (const [key, detection] of Object.entries(detectionCounts)) {
+      if (handledDetectionKeys.has(key.toLowerCase())) continue; // Already processed above
+      if (!detection || (detection.count || 0) === 0) continue;
+
+      const pricing = bluebeamPricing[key];
+      if (pricing) {
+        console.log(`📦 Bluebeam count item: "${key}" × ${detection.count} @ $${pricing.material_cost}/ea`);
+        const extended = detection.count * pricing.material_cost;
+        lineItems.push({
+          description: pricing.description,
+          sku: pricing.sku,
+          quantity: detection.count,
+          unit: 'ea',
+          category: 'bluebeam_count',
+          presentation_group: pricing.presentation_group,
+          item_order: 99,
+          material_unit_cost: pricing.material_cost,
+          material_extended: extended,
+          labor_unit_cost: 0,
+          labor_extended: 0,
+          total_extended: extended,
+          calculation_source: 'auto-scope',
+          notes: `Bluebeam count: ${key} = ${detection.count}`,
+        });
+        totalMaterialCost += extended;
+      } else {
+        console.log(`⚠️ Unknown Bluebeam count item: "${key}" × ${detection.count} — no pricing found`);
+      }
+    }
   }
 
   // =========================================================================
