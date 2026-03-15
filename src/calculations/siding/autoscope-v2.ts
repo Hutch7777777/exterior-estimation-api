@@ -401,10 +401,26 @@ export function buildMeasurementContext(
   const openings_perimeter_lf = get(['openings_total_perimeter_lf', 'openings_perimeter_lf']);
 
   // Corners - DB uses corners_outside_count, corners_inside_count
-  const outside_corners_count = get(['corners_outside_count', 'outside_corner_count', 'outside_corners_count']);
-  const inside_corners_count = get(['corners_inside_count', 'inside_corner_count', 'inside_corners_count']);
-  const outside_corner_lf = get(['corners_outside_lf', 'outside_corner_lf']);
-  const inside_corner_lf = get(['corners_inside_lf', 'inside_corner_lf']);
+  // Webhook sends nested: corners.outside_count, corners.outside_lf, etc.
+  const outside_corners_count = get(['corners_outside_count', 'outside_corner_count', 'outside_corners_count'])
+    || Number(wh.corners?.outside_count) || 0;
+  const inside_corners_count = get(['corners_inside_count', 'inside_corner_count', 'inside_corners_count'])
+    || Number(wh.corners?.inside_count) || 0;
+  const outside_corner_lf = get(['corners_outside_lf', 'outside_corner_lf', 'outside_corners_lf'])
+    || Number(wh.corners?.outside_lf) || 0;
+  const inside_corner_lf = get(['corners_inside_lf', 'inside_corner_lf', 'inside_corners_lf'])
+    || Number(wh.corners?.inside_lf) || 0;
+
+  // DEBUG: Log corner values resolution
+  console.log('🔧 [CORNERS DEBUG]:', {
+    outside_corners_count,
+    outside_corner_lf,
+    inside_corners_count,
+    inside_corner_lf,
+    from_db_corners_outside_lf: db.corners_outside_lf,
+    from_wh_corners_outside_lf: wh.corners_outside_lf,
+    from_wh_corners_nested: wh.corners?.outside_lf,
+  });
 
   // Other
   const level_starter_lf = get(['level_starter_lf']);
