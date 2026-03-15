@@ -26,6 +26,7 @@ export interface WebhookMeasurements {
   gross_wall_area_sqft?: number;
   net_wall_area_sqft?: number;
   net_siding_area_sqft?: number;
+  net_siding_sqft?: number;  // CAD path field name variant
 
   windows?: {
     count: number;

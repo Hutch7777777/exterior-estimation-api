@@ -31,7 +31,9 @@ export function transformWebhookToCalculationRequest(
   const grossArea = m.facade_sqft || m.gross_wall_area_sqft || 0;
 
   // Calculate net area - try multiple field names
-  const netArea = m.net_siding_area_sqft ||
+  // Priority: net_siding_sqft (CAD path) > net_siding_area_sqft > net_wall_area_sqft > calculated
+  const netArea = m.net_siding_sqft ||
+                  m.net_siding_area_sqft ||
                   m.net_wall_area_sqft ||
                   (grossArea - calculateOpeningsArea(m));
 
