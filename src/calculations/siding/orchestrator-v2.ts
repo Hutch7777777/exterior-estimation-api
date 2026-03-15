@@ -1249,7 +1249,15 @@ export async function calculateWithAutoScopeV2(
       const materialExtended = Math.round(materialCost * 100) / 100;
 
       // Build descriptive notes based on the calculation type
-      const wasteMultiplier = 1.12;
+      // Use same category-aware waste/coverage as calculateMaterialQuantity()
+      const category = pricing.category?.toLowerCase() || '';
+      const categoryWasteDefaults: Record<string, number> = {
+        'lap_siding': 1.10, 'siding': 1.10,
+        'panel': 1.10, 'board_batten': 1.10, 'panel_siding': 1.10,
+        'shingle': 1.15, 'shingle_siding': 1.15, 'shake': 1.15,
+        'trim': 1.10, 'corners': 1.12, 'flashing': 1.10
+      };
+      const wasteMultiplier = pricing.waste_factor || categoryWasteDefaults[category] || 1.10;
       const pricingUnit = pricing.unit?.toLowerCase() || '';
 
       if (!notes) {  // Only set if not already set by trim fallback
@@ -1258,11 +1266,16 @@ export async function calculateWithAutoScopeV2(
           notes = `${effectiveQuantity.toFixed(0)} SF × ${wasteMultiplier} waste ÷ 100 = ${quantity} SQ`;
         } else if (assignment.unit === 'SF' && (pricingUnit === 'ea' || pricingUnit === 'pc' || pricingUnit === 'piece')) {
           // SF to pieces using coverage
-          const coveragePerPiece = pricing.coverage_value || 7.25;
+          const categoryCoverageDefaults: Record<string, number> = {
+            'lap_siding': 6.58, 'siding': 6.58,
+            'panel': 40, 'board_batten': 40, 'panel_siding': 40,
+            'shingle': 2.33, 'shingle_siding': 2.33, 'shake': 2.33
+          };
+          const coveragePerPiece = pricing.coverage_value || categoryCoverageDefaults[category] || 6.58;
           notes = `${effectiveQuantity.toFixed(0)} SF × ${wasteMultiplier} waste ÷ ${coveragePerPiece} SF/pc = ${quantity} pcs`;
         } else if (assignment.unit === 'LF' && (pricingUnit === 'ea' || pricingUnit === 'pc' || pricingUnit === 'pieces')) {
           // LF to pieces
-          const pieceLength = 12;
+          const pieceLength = pricing.coverage_value || 12;
           notes = `${effectiveQuantity.toFixed(1)} LF ÷ ${pieceLength}ft × ${wasteMultiplier} waste = ${quantity} pcs`;
         } else if (assignment.unit === 'EA') {
           notes = `${quantity} ${assignment.detection_class || 'items'} from detection`;
@@ -2542,20 +2555,24 @@ function consolidateLineItems(lineItems: CombinedLineItem[]): CombinedLineItem[]
     let finalNotes = item.notes;
     if (item.detection_count && item.detection_count > 1 && rawTotal > 0) {
       const unit = item.unit?.toLowerCase() || '';
-      const wasteMultiplier = 1.12;
+      // Extract waste from original note or use default 1.10
+      const wasteMatch = item.notes?.match(/×\s*([\d.]+)\s*waste/);
+      const wasteMultiplier = wasteMatch ? parseFloat(wasteMatch[1]) : 1.10;
 
       // Determine note format based on unit and original note pattern
       if (item.notes?.includes('SF/pc') || item.notes?.includes('pieces')) {
         // SF to pieces conversion - extract coverage from original note or use default
         const coverageMatch = item.notes.match(/÷\s*([\d.]+)\s*SF\/pc/);
-        const coverage = coverageMatch ? parseFloat(coverageMatch[1]) : 7.25;
+        const coverage = coverageMatch ? parseFloat(coverageMatch[1]) : 6.58;
         finalNotes = `${rawTotal.toFixed(0)} SF × ${wasteMultiplier} waste ÷ ${coverage} SF/pc = ${roundedQty} pcs`;
       } else if (item.notes?.includes('SF') && item.notes?.includes('SQ')) {
         // SF to squares conversion
         finalNotes = `${rawTotal.toFixed(0)} SF × ${wasteMultiplier} waste ÷ 100 = ${roundedQty} SQ`;
       } else if (item.notes?.includes('LF') && (unit === 'ea' || unit === 'pc' || item.notes?.includes('pcs'))) {
-        // LF to pieces conversion
-        finalNotes = `${rawTotal.toFixed(1)} LF ÷ 12ft × ${wasteMultiplier} waste = ${roundedQty} pcs`;
+        // LF to pieces conversion - extract piece length from original note or use default
+        const lengthMatch = item.notes.match(/÷\s*([\d.]+)ft/);
+        const pieceLength = lengthMatch ? parseFloat(lengthMatch[1]) : 12;
+        finalNotes = `${rawTotal.toFixed(1)} LF ÷ ${pieceLength}ft × ${wasteMultiplier} waste = ${roundedQty} pcs`;
       }
       // Otherwise keep original notes
     }
@@ -2573,12 +2590,34 @@ function consolidateLineItems(lineItems: CombinedLineItem[]): CombinedLineItem[]
 
 /**
  * Calculate material quantity based on assignment and pricing info
+ *
+ * Waste factors by category (from pricing_items.waste_factor or defaults):
+ * - lap_siding: 1.10 (10% waste - tight cuts, experienced crews)
+ * - panel/board_batten: 1.10 (10% waste)
+ * - shingle: 1.15 (15% waste - more complex fitting)
+ * - trim: 1.10, corners: 1.12, flashing: 1.10
+ *
+ * Coverage values (from pricing_items.coverage_value or defaults):
+ * - lap_siding (7.25" reveal): 6.58 SF/pc
+ * - panel/board_batten: 40 SF/panel
+ * - shingle: 2.33 SF/pc (100 SF ÷ 43 pcs/square)
  */
 function calculateMaterialQuantity(
   assignment: MaterialAssignment,
   pricing: PricingItem
 ): number {
-  const wasteMultiplier = 1.12; // 12% waste factor
+  const category = pricing.category?.toLowerCase() || '';
+
+  // Use pricing_items.waste_factor if available, otherwise category-aware defaults
+  // Office takeoffs use ~5-10% waste for lap siding, higher for complex materials
+  const categoryWasteDefaults: Record<string, number> = {
+    'lap_siding': 1.10, 'siding': 1.10,
+    'panel': 1.10, 'board_batten': 1.10, 'panel_siding': 1.10,
+    'shingle': 1.15, 'shingle_siding': 1.15, 'shake': 1.15,
+    'trim': 1.10, 'corners': 1.12, 'flashing': 1.10
+  };
+  const wasteMultiplier = pricing.waste_factor || categoryWasteDefaults[category] || 1.10;
+
   const pricingUnit = pricing.unit?.toLowerCase() || '';
 
   // For siding: convert SF to squares (100 SF = 1 square)
@@ -2588,7 +2627,7 @@ function calculateMaterialQuantity(
 
   // For linear items sold by piece (e.g., 12ft pieces)
   if (assignment.unit === 'LF' && (pricingUnit === 'ea' || pricingUnit === 'pc' || pricingUnit === 'pieces')) {
-    const pieceLength = 12; // Standard 12ft pieces
+    const pieceLength = pricing.coverage_value || 12; // coverage_value stores piece length for LF items
     return Math.ceil((assignment.quantity / pieceLength) * wasteMultiplier);
   }
 
@@ -2604,10 +2643,19 @@ function calculateMaterialQuantity(
   // For siding/materials sold by piece with coverage data (e.g., HardiePlank)
   // Converts SF → ea using coverage_value from pricing_items
   if (assignment.unit === 'SF' && (pricingUnit === 'ea' || pricingUnit === 'pc' || pricingUnit === 'piece')) {
-    const coveragePerPiece = pricing.coverage_value || 7.25; // Default to 7.25 SF per plank
+    // Category-aware coverage defaults matching office takeoffs:
+    // - Lap siding (7.25" reveal, 12ft plank): 6.58 SF/pc
+    // - B&B panel (4x10): 40 SF/panel
+    // - Shingle: 2.33 SF/pc (100 SF ÷ 43 pcs/square)
+    const categoryCoverageDefaults: Record<string, number> = {
+      'lap_siding': 6.58, 'siding': 6.58,
+      'panel': 40, 'board_batten': 40, 'panel_siding': 40,
+      'shingle': 2.33, 'shingle_siding': 2.33, 'shake': 2.33
+    };
+    const coveragePerPiece = pricing.coverage_value || categoryCoverageDefaults[category] || 6.58;
     const pieces = Math.ceil((assignment.quantity * wasteMultiplier) / coveragePerPiece);
 
-    console.log(`📐 SF→ea conversion: ${assignment.quantity} SF × ${wasteMultiplier} waste ÷ ${coveragePerPiece} coverage = ${pieces} pieces`);
+    console.log(`📐 SF→ea conversion: ${assignment.quantity} SF × ${wasteMultiplier} waste ÷ ${coveragePerPiece} coverage = ${pieces} pieces (category: ${category})`);
 
     return pieces;
   }
