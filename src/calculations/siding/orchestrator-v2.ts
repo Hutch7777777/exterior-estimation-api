@@ -2625,6 +2625,12 @@ export async function calculateWithAutoScopeV2(
   const assignedCount = lineItems.filter(i => i.calculation_source === 'assigned_material').length;
   const autoScopeCount = lineItems.filter(i => i.calculation_source === 'auto-scope').length;
 
+  // =========================================================================
+  // RECONCILIATION: Log warnings for detection classes that didn't produce line items
+  // This is read-only logging for visibility into dropped classes
+  // =========================================================================
+  reconcileDetectionOutput(detectionCounts, lineItems);
+
   return {
     success: true,
     line_items: lineItems,
@@ -2669,6 +2675,126 @@ export async function calculateWithAutoScopeV2(
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
+
+/**
+ * Reconcile detection input vs output - log warnings for dropped classes
+ *
+ * This function compares the incoming detectionCounts (what frontend sent)
+ * against the generated lineItems (what orchestrator produced). Any detection
+ * class that has count/lf/sf > 0 but no corresponding line item is logged
+ * as a warning for visibility in Railway logs.
+ *
+ * IMPORTANT: This is READ-ONLY logging - no side effects on calculation.
+ */
+function reconcileDetectionOutput(
+  detectionCounts: Record<string, { count: number; total_lf?: number; total_sf?: number }> | undefined,
+  lineItems: CombinedLineItem[]
+): void {
+  console.log('');
+  console.log('[RECONCILIATION] ════════════════════════════════════════════════════');
+  console.log('[RECONCILIATION] Checking detection input vs line item output...');
+
+  if (!detectionCounts || Object.keys(detectionCounts).length === 0) {
+    console.log('[RECONCILIATION] No detection counts received - skipping reconciliation');
+    console.log('[RECONCILIATION] ════════════════════════════════════════════════════');
+    return;
+  }
+
+  // Classes to skip - these are structural/facade classes, not material classes
+  const SKIP_CLASSES = new Set([
+    'building',
+    'exterior wall',
+    'exterior_wall',
+    'facade',
+    'roof',  // Handled by roofing trade
+    'siding',  // Generic siding class - materials come from assigned_material_id
+  ]);
+
+  // Build a set of classes that have line items
+  const classesWithLineItems = new Set<string>();
+
+  for (const item of lineItems) {
+    // Check category
+    if (item.category) {
+      classesWithLineItems.add(item.category.toLowerCase());
+    }
+
+    // Check description for class references (e.g., "Corbel - Decorative")
+    if (item.description) {
+      const descLower = item.description.toLowerCase();
+      // Add common class name extractions from descriptions
+      for (const className of Object.keys(detectionCounts)) {
+        const classLower = className.toLowerCase().replace(/_/g, ' ');
+        if (descLower.includes(classLower)) {
+          classesWithLineItems.add(className.toLowerCase());
+        }
+      }
+    }
+
+    // Check notes for class references
+    if (item.notes) {
+      const notesLower = item.notes.toLowerCase();
+      for (const className of Object.keys(detectionCounts)) {
+        const classLower = className.toLowerCase().replace(/_/g, ' ');
+        if (notesLower.includes(classLower) || notesLower.includes(className.toLowerCase())) {
+          classesWithLineItems.add(className.toLowerCase());
+        }
+      }
+    }
+  }
+
+  // Check each detection class
+  const missingClasses: string[] = [];
+  let totalClasses = 0;
+  let matchedClasses = 0;
+
+  for (const [className, data] of Object.entries(detectionCounts)) {
+    const classLower = className.toLowerCase();
+
+    // Skip structural classes
+    if (SKIP_CLASSES.has(classLower)) {
+      continue;
+    }
+
+    // Check if this class has meaningful data
+    const count = data.count || 0;
+    const totalLf = data.total_lf || 0;
+    const totalSf = data.total_sf || 0;
+
+    if (count <= 0 && totalLf <= 0 && totalSf <= 0) {
+      continue;  // No data for this class
+    }
+
+    totalClasses++;
+
+    // Check if we generated line items for this class
+    const hasLineItem = classesWithLineItems.has(classLower) ||
+                        classesWithLineItems.has(className.replace(/_/g, ' ').toLowerCase());
+
+    if (hasLineItem) {
+      matchedClasses++;
+      console.log(`[RECONCILIATION] ✅ ${className}: count=${count}, lf=${totalLf.toFixed(1)}, sf=${totalSf.toFixed(1)} → line items generated`);
+    } else {
+      missingClasses.push(className);
+      console.log(`[RECONCILIATION] ⚠️  WARNING: Class '${className}' received (count: ${count}, lf: ${totalLf.toFixed(1)}, sf: ${totalSf.toFixed(1)}) but NO LINE ITEMS were generated`);
+    }
+  }
+
+  // Summary
+  console.log('[RECONCILIATION] ────────────────────────────────────────────────────');
+  console.log(`[RECONCILIATION] SUMMARY: ${matchedClasses}/${totalClasses} detection classes produced line items`);
+
+  if (missingClasses.length > 0) {
+    console.log(`[RECONCILIATION] ⚠️  MISSING CLASSES (${missingClasses.length}): ${missingClasses.join(', ')}`);
+    console.log('[RECONCILIATION] These classes were in detectionCounts but no line items reference them.');
+    console.log('[RECONCILIATION] Possible causes: class not in hardcoded handlers, no auto-scope rule, or filtered out.');
+  } else {
+    console.log('[RECONCILIATION] ✅ All detection classes with data have corresponding line items');
+  }
+
+  console.log('[RECONCILIATION] ════════════════════════════════════════════════════');
+  console.log('');
+}
 
 /**
  * Consolidate line items by pricing_item_id (or SKU as fallback)
