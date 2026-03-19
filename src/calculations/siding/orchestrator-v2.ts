@@ -868,6 +868,46 @@ export async function calculateWithAutoScopeV2(
   console.log(`📋 Constants from DB: markup=${CALC_MARKUP_RATE}, L&I=${CALC_SOC_UNEMPLOYMENT_RATE}, insurance=$${CALC_INSURANCE_RATE_PER_THOUSAND}/1000`);
 
   // =========================================================================
+  // FETCH DETECTION CLASS MAPPINGS FROM DATABASE
+  // These define how each detection class should be processed (measurement_type,
+  // waste_factor, default_product_sku, etc.). Used by the dynamic detection loop
+  // to catch classes not handled by hardcoded blocks.
+  // =========================================================================
+  interface DetectionClassMapping {
+    class_name: string;
+    display_name: string;
+    measurement_type: 'count' | 'linear' | 'area';
+    unit_of_measure: string;
+    waste_factor: number;
+    trade: string;
+    default_product_sku: string | null;
+    presentation_group: string | null;
+  }
+
+  let classMappings: DetectionClassMapping[] = [];
+  try {
+    if (isDatabaseConfigured()) {
+      const client = getSupabaseClient();
+      const { data, error } = await client
+        .from('detection_class_material_mapping')
+        .select('class_name, display_name, measurement_type, unit_of_measure, waste_factor, trade, default_product_sku, presentation_group')
+        .eq('active', true);
+
+      if (error) {
+        console.error('⚠️ Failed to fetch detection_class_material_mapping:', error.message);
+      } else if (data && data.length > 0) {
+        classMappings = data as DetectionClassMapping[];
+        console.log(`📋 Loaded ${classMappings.length} detection class mappings from DB`);
+      } else {
+        console.log('ℹ️ No active detection class mappings found in DB');
+      }
+    }
+  } catch (err: any) {
+    console.error('⚠️ Exception fetching detection class mappings:', err.message);
+    // Continue without mappings - dynamic loop will log unknown classes
+  }
+
+  // =========================================================================
   // FETCH ESTIMATE SETTINGS FROM DATABASE
   // n8n strips estimate_settings from the payload, so we fetch directly from
   // project_configurations table using the project_id
@@ -2413,6 +2453,125 @@ export async function calculateWithAutoScopeV2(
     console.log(`   - Ridge: ${ridgeLf.toFixed(1)} LF`);
     console.log(`   - Valley: ${valleyLf.toFixed(1)} LF`);
     console.log('   (These are passed to roofing trade API for drip edge, starter, ridge cap calculations)');
+  }
+
+  // =========================================================================
+  // DYNAMIC DETECTION CLASS PROCESSING
+  // Catch-all for detection classes not handled by hardcoded blocks above.
+  // Uses detection_class_material_mapping from database to generate line items.
+  // =========================================================================
+  if (detectionCounts && Object.keys(detectionCounts).length > 0 && classMappings.length > 0) {
+    console.log('\n🔄 [DYNAMIC DETECTION] Processing additional detection classes...');
+
+    // Classes already handled by hardcoded blocks above — do not double-process
+    const HANDLED_CLASSES = new Set([
+      // Structural/facade classes (not materials)
+      'building', 'exterior_wall', 'exterior wall', 'facade', 'roof', 'siding',
+      // Core openings (handled by webhook measurements)
+      'window', 'door', 'garage',
+      // Gables and corners (handled by auto-scope rules)
+      'gable', 'corner_inside', 'corner_outside',
+      // Linear detections with dedicated handling
+      'belly_band', 'soffit', 'fascia', 'gutter', 'downspout',
+      'gable_topout', 'topout', 'eave', 'rake', 'ridge', 'valley',
+      // Architectural details with dedicated handling
+      'corbel', 'bracket', 'shutter', 'post', 'column',
+      // Penetrations with dedicated handling
+      'vent', 'gable_vent', 'outlet', 'hose_bib', 'light_fixture',
+    ]);
+
+    // Build a map for fast lookup
+    const classMappingMap = new Map<string, DetectionClassMapping>();
+    for (const mapping of classMappings) {
+      classMappingMap.set(mapping.class_name.toLowerCase(), mapping);
+    }
+
+    const dynamicProcessed: string[] = [];
+    const dynamicUnknown: string[] = [];
+
+    for (const [className, data] of Object.entries(detectionCounts)) {
+      const classLower = className.toLowerCase();
+
+      // Skip classes already handled by hardcoded blocks
+      if (HANDLED_CLASSES.has(classLower)) {
+        continue;
+      }
+
+      // Check if this class has meaningful data
+      const count = data.count || 0;
+      const totalLf = data.total_lf || 0;
+      const totalSf = data.total_sf || 0;
+
+      if (count <= 0 && totalLf <= 0 && totalSf <= 0) {
+        continue;  // No data for this class
+      }
+
+      // Look up mapping
+      const mapping = classMappingMap.get(classLower);
+
+      if (mapping) {
+        // Calculate quantity based on measurement type
+        let quantity = 0;
+        let rawValue = 0;
+
+        switch (mapping.measurement_type) {
+          case 'count':
+            rawValue = count;
+            quantity = Math.ceil(count * (mapping.waste_factor || 1));
+            break;
+          case 'linear':
+            rawValue = totalLf;
+            quantity = Math.ceil(totalLf * (mapping.waste_factor || 1.12));
+            break;
+          case 'area':
+            rawValue = totalSf;
+            quantity = Math.ceil(totalSf * (mapping.waste_factor || 1.12));
+            break;
+        }
+
+        if (quantity <= 0) continue;
+
+        // Determine presentation group from mapping or trade
+        const presentationGroup = mapping.presentation_group ||
+          (mapping.trade === 'trim' ? 'Trim' :
+           mapping.trade === 'siding' ? 'Siding' :
+           mapping.trade === 'gutters' ? 'Gutters & Downspouts' :
+           mapping.trade === 'architectural' ? 'Architectural Details' :
+           'Accessories');
+
+        // Create line item
+        const notePrefix = mapping.default_product_sku ? '' : '⚠️ VERIFY PRICING — ';
+        lineItems.push({
+          description: mapping.display_name || className,
+          sku: mapping.default_product_sku || `DYNAMIC-${classLower.toUpperCase()}`,
+          quantity: quantity,
+          unit: mapping.unit_of_measure || 'EA',
+          category: mapping.trade || 'accessories',
+          presentation_group: presentationGroup,
+          material_unit_cost: 0,  // Will need pricing lookup or manual entry
+          material_extended: 0,
+          labor_unit_cost: 0,
+          labor_extended: 0,
+          total_extended: 0,
+          calculation_source: 'auto-scope',  // Uses auto-scope type for consistency
+          notes: `${notePrefix}Dynamic detection: ${className} (${rawValue.toFixed(1)} ${mapping.measurement_type === 'linear' ? 'LF' : mapping.measurement_type === 'area' ? 'SF' : 'count'} × ${mapping.waste_factor || 1} waste)`,
+        });
+
+        dynamicProcessed.push(className);
+        console.log(`   ✅ ${className}: ${rawValue.toFixed(1)} → ${quantity} ${mapping.unit_of_measure} (${mapping.display_name})`);
+      } else {
+        // No mapping exists — log warning
+        dynamicUnknown.push(className);
+        console.log(`   ⚠️ WARNING: Unknown detection class '${className}' with data {count: ${count}, lf: ${totalLf.toFixed(1)}, sf: ${totalSf.toFixed(1)}} — no mapping in detection_class_material_mapping`);
+      }
+    }
+
+    // Step C: Summary log
+    console.log(`🔄 [DYNAMIC DETECTION] SUMMARY:`);
+    console.log(`   Processed ${dynamicProcessed.length} additional classes: ${dynamicProcessed.length > 0 ? dynamicProcessed.join(', ') : '(none)'}`);
+    console.log(`   Skipped ${dynamicUnknown.length} unknown classes: ${dynamicUnknown.length > 0 ? dynamicUnknown.join(', ') : '(none)'}`);
+  } else if (detectionCounts && Object.keys(detectionCounts).length > 0) {
+    console.log('ℹ️ [DYNAMIC DETECTION] Skipped — no class mappings loaded from database');
   }
 
   // =========================================================================
