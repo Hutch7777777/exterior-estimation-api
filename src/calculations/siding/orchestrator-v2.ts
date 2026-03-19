@@ -2790,6 +2790,29 @@ export async function calculateWithAutoScopeV2(
   // =========================================================================
   reconcileDetectionOutput(detectionCounts, lineItems);
 
+  // =========================================================================
+  // AUDIT: Write detection counts to extraction_job_totals
+  // This creates a permanent audit trail of what detections were received
+  // =========================================================================
+  if (detectionCounts && extractionId) {
+    try {
+      const serviceClient = getSupabaseServiceClient();
+      const { error: auditError } = await serviceClient
+        .from('extraction_job_totals')
+        .update({ detection_counts_by_class: detectionCounts })
+        .eq('job_id', extractionId);
+
+      if (auditError) {
+        console.error('[AUDIT] Failed to write detection_counts_by_class:', auditError);
+      } else {
+        console.log('[AUDIT] Wrote detection_counts_by_class for job:', extractionId);
+      }
+    } catch (err) {
+      console.error('[AUDIT] Failed to write detection_counts_by_class:', err);
+      // Non-fatal — don't break the pipeline
+    }
+  }
+
   return {
     success: true,
     line_items: lineItems,
