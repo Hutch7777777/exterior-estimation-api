@@ -181,7 +181,7 @@ export async function loadDetectionCountPricing(): Promise<Map<string, Detection
     );
 
     if (mappingError) {
-      console.error('❌ [detectionCountPricing] Failed to fetch mappings:', mappingError.message, mappingError);
+      console.error('❌ [detectionCountPricing] Failed to fetch mappings:', mappingError);
       return detectionPricingCache ?? new Map();
     }
 
@@ -254,7 +254,7 @@ export async function loadDetectionCountPricing(): Promise<Map<string, Detection
     );
 
     if (bluebeamError) {
-      console.warn('⚠️ [detectionCountPricing] Failed to fetch bluebeam_subject_mappings:', bluebeamError.message);
+      console.warn('⚠️ [detectionCountPricing] Failed to fetch bluebeam_subject_mappings:', bluebeamError);
       // Non-fatal — continue with what we have from detection_class_material_mapping
     } else {
       let bluebeamAdded = 0;
