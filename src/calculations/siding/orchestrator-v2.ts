@@ -18,7 +18,7 @@ import {
 import { AutoScopeLineItem, MaterialCategoryAreas } from '../../types/autoscope';
 import { getSupabaseClient, getSupabaseServiceClient, isDatabaseConfigured } from '../../services/database';
 import { getCalculationConstants, getProjectEstimateSettings, ProjectEstimateSettings } from '../../services/configService';
-import { loadDetectionCountPricing, DetectionCountPricing } from '../../services/detectionCountPricing';
+import { loadDetectionCountPricing, DetectionCountPricing, lastFetchResult } from '../../services/detectionCountPricing';
 
 // ============================================================================
 // BOOLEAN HELPERS - Handle JSON string "true"/"false" from Supabase
@@ -2093,7 +2093,7 @@ export async function calculateWithAutoScopeV2(
   const columnCount = detectionCounts?.column?.count || 0;
 
   if (corbelCount > 0) {
-    console.log(`🔍 [corbel-debug] map=${detectionCountPricingMap.size} SERVICE_KEY=${!!process.env.SUPABASE_SERVICE_ROLE_KEY} SUPABASE_URL=${!!(process.env.SUPABASE_URL)}`);
+    console.log(`🔍 [corbel-debug] map=${detectionCountPricingMap.size} SK=${!!process.env.SUPABASE_SERVICE_ROLE_KEY} URL=${!!process.env.SUPABASE_URL} fetch="${lastFetchResult}"`);
     if (detectionCountPricingMap.size > 0) {
       console.log(`🔍 [corbel-debug] keys: ${Array.from(detectionCountPricingMap.keys()).slice(0,10).join(', ')}`);
     }

@@ -45,8 +45,9 @@ async function serviceRoleFetch<T>(
       },
     });
     const rows = await res.json() as T[];
-    // Single-line summary that's compact enough to survive rate-limiting
-    console.log(`[SRF] ${res.status} rows=${Array.isArray(rows)?rows.length:'?'} svcRole=${isServiceRole}`);
+    const rowCount = Array.isArray(rows) ? rows.length : '?';
+    // Store result in module-level var so corbel-debug log can read it
+    lastFetchResult = `status=${res.status} rows=${rowCount} svcRole=${isServiceRole} key=${key.slice(0,15)}...`;
     if (!res.ok) return { data: null, error: `HTTP ${res.status}` };
     return { data: rows, error: null };
   } catch (err: any) {
@@ -85,6 +86,7 @@ export interface DetectionCountPricing {
 
 let detectionPricingCache: Map<string, DetectionCountPricing> | null = null;
 let cacheTimestamp = 0;
+export let lastFetchResult = 'not called yet';
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 export function clearDetectionCountPricingCache(): void {
