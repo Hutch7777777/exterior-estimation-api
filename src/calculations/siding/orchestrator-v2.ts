@@ -18,6 +18,7 @@ import {
 import { AutoScopeLineItem, MaterialCategoryAreas } from '../../types/autoscope';
 import { getSupabaseClient, getSupabaseServiceClient, isDatabaseConfigured } from '../../services/database';
 import { getCalculationConstants, getProjectEstimateSettings, ProjectEstimateSettings } from '../../services/configService';
+import { loadDetectionCountPricing, DetectionCountPricing } from '../../services/detectionCountPricing';
 
 // ============================================================================
 // BOOLEAN HELPERS - Handle JSON string "true"/"false" from Supabase
@@ -908,6 +909,20 @@ export async function calculateWithAutoScopeV2(
   }
 
   // =========================================================================
+  // LOAD DETECTION COUNT PRICING FROM DATABASE
+  // Replaces the hardcoded bluebeamPricing map and inline unit costs.
+  // Keyed by both class_name ('corbel') and display_name ('Corbel Count').
+  // Falls back gracefully — unknown keys get $0 VERIFY PRICING line items.
+  // =========================================================================
+  let detectionCountPricingMap = new Map<string, DetectionCountPricing>();
+  try {
+    detectionCountPricingMap = await loadDetectionCountPricing();
+    console.log(`📦 [detectionCountPricing] ${detectionCountPricingMap.size} entries loaded`);
+  } catch (err: any) {
+    console.error('⚠️ [detectionCountPricing] Failed to load, proceeding without:', err.message);
+  }
+
+  // =========================================================================
   // FETCH ESTIMATE SETTINGS FROM DATABASE
   // n8n strips estimate_settings from the payload, so we fetch directly from
   // project_configurations table using the project_id
@@ -1668,14 +1683,19 @@ export async function calculateWithAutoScopeV2(
     const NAILS_COVERAGE_LF = 150;
 
     // 1. HardieTrim 5/4 x 8 boards (12ft pieces) - main belly band material
+    const boardPricing = detectionCountPricingMap.get('belly_band_trim')
+      ?? detectionCountPricingMap.get('JH-TRIM-BB-8-CP');
     const boardPieces = Math.ceil((bellyBandLf / BOARD_LENGTH_FT) * WASTE_FACTOR);
-    const boardUnitCost = 32.00;
+    const boardUnitCost = boardPricing?.material_cost ?? 32.00;
     const boardExtended = boardPieces * boardUnitCost;
+    if (!boardPricing) {
+      console.warn('⚠️ [bellyBand] No DB pricing for belly_band_trim — using fallback $32.00');
+    }
     lineItems.push({
-      description: 'HardieTrim 5/4 x 8 x 12ft ColorPlus - Belly Band',
-      sku: 'JH-TRIM-BB-8-CP',
+      description: boardPricing?.description ?? 'HardieTrim 5/4 x 8 x 12ft ColorPlus - Belly Band',
+      sku: boardPricing?.sku ?? 'JH-TRIM-BB-8-CP',
       quantity: boardPieces,
-      unit: 'ea',
+      unit: boardPricing?.unit ?? 'ea',
       category: 'belly_band_trim',
       presentation_group: 'Belly Band',
       item_order: 1,
@@ -1690,14 +1710,19 @@ export async function calculateWithAutoScopeV2(
     totalMaterialCost += boardExtended;
 
     // 2. Z-Flashing 2" (10ft pieces) - runs along top of belly band
+    const zFlashPricing = detectionCountPricingMap.get('belly_band_flashing')
+      ?? detectionCountPricingMap.get('112Z2BPW');
     const zFlashingPieces = Math.ceil((bellyBandLf / FLASHING_LENGTH_FT) * WASTE_FACTOR);
-    const zFlashingUnitCost = 12.50;
+    const zFlashingUnitCost = zFlashPricing?.material_cost ?? 12.50;
     const zFlashingExtended = zFlashingPieces * zFlashingUnitCost;
+    if (!zFlashPricing) {
+      console.warn('⚠️ [bellyBand] No DB pricing for belly_band_flashing — using fallback $12.50');
+    }
     lineItems.push({
-      description: 'Z-Flashing 2" Pre-Painted White - Belly Band Head',
-      sku: '112Z2BPW',
+      description: zFlashPricing?.description ?? 'Z-Flashing 2" Pre-Painted White - Belly Band Head',
+      sku: zFlashPricing?.sku ?? '112Z2BPW',
       quantity: zFlashingPieces,
-      unit: 'ea',
+      unit: zFlashPricing?.unit ?? 'ea',
       category: 'belly_band_flashing',
       presentation_group: 'Belly Band',
       item_order: 2,
@@ -2066,23 +2091,32 @@ export async function calculateWithAutoScopeV2(
   const columnCount = detectionCounts?.column?.count || 0;
 
   if (corbelCount > 0) {
-    console.log(`✅ GENERATING CORBEL ITEMS for ${corbelCount} corbels`);
-    const corbelCost = 147.00;  // Glu-Lam Corbel Assembly - matches office takeoff
+    const corbelPricing = detectionCountPricingMap.get('corbel');
+    const corbelCost = corbelPricing?.material_cost ?? 0;
+    const corbelSku = corbelPricing?.sku ?? 'CORBEL-GLULAM';
+    const corbelDescription = corbelPricing?.description ?? 'Glu-Lam Corbel Assembly';
     const corbelExtended = corbelCount * corbelCost;
+
+    if (corbelPricing) {
+      console.log(`✅ GENERATING CORBEL ITEMS for ${corbelCount} corbels @ $${corbelCost}/ea (DB)`);
+    } else {
+      console.warn(`⚠️ No DB pricing for corbel — emitting $0 VERIFY PRICING line item`);
+    }
+
     lineItems.push({
-      description: 'Glu-Lam Corbel Assembly',
-      sku: 'CORBEL-GLULAM',
+      description: corbelPricing ? corbelDescription : `⚠️ Glu-Lam Corbel Assembly (VERIFY PRICING)`,
+      sku: corbelSku,
       quantity: corbelCount,
-      unit: 'ea',
+      unit: corbelPricing?.unit ?? 'ea',
       category: 'corbel',
-      presentation_group: 'Architectural Details',
+      presentation_group: corbelPricing?.presentation_group ?? 'Architectural Details',
       item_order: 1,
       material_unit_cost: corbelCost,
       material_extended: corbelExtended,
-      labor_unit_cost: 0,
-      labor_extended: 0,
-      total_extended: corbelExtended,
-      calculation_source: 'auto-scope',
+      labor_unit_cost: corbelPricing?.labor_cost ?? 0,
+      labor_extended: (corbelPricing?.labor_cost ?? 0) * corbelCount,
+      total_extended: corbelExtended + (corbelPricing?.labor_cost ?? 0) * corbelCount,
+      calculation_source: corbelPricing ? 'auto-scope' : 'detection_count_unmatched',
       notes: `Corbels from detection: ${corbelCount} locations`,
     });
     totalMaterialCost += corbelExtended;
@@ -2191,49 +2225,56 @@ export async function calculateWithAutoScopeV2(
     'vent', 'gable_vent', 'outlet', 'hose_bib', 'light_fixture'
   ]);
 
-  const bluebeamPricing: Record<string, { sku: string; description: string; material_cost: number; presentation_group: string }> = {
-    '1" x 6" WW Trim Count': { sku: 'WW-1X6-20', description: '1x6 WhiteWood Trim 20ft', material_cost: 26.06, presentation_group: 'Window Trims' },
-    '2" x 12" x 20\' Trim Count': { sku: 'WW-2X12-20', description: '2x12 WhiteWood Belly Band 20ft', material_cost: 72.37, presentation_group: 'Horizontal Trims' },
-    '2" x 3" Trim Count': { sku: 'WW-2X3-12', description: '2x3 WhiteWood Slope Sill 12ft', material_cost: 12.98, presentation_group: 'Window Trims' },
-    '2" x 2" x 20" Trim Count': { sku: 'WW-2X2-20', description: '2x2 WhiteWood Trim 20ft', material_cost: 10.42, presentation_group: 'Trim & Corners' },
-    '4/4" x 8" Trim Count': { sku: 'HT-44-8-12-PR', description: 'HardieTrim 4/4 x 8 x 12ft Primed', material_cost: 18.50, presentation_group: 'Trim & Corners' },
-    'Corbel Count': { sku: 'CORBEL-GLULAM', description: 'Glu-Lam Corbel Assembly', material_cost: 147.00, presentation_group: 'Other Materials' },
-    'Window Head Flashing Count': { sku: 'FLASH-HEAD-WIN', description: 'Window Head Flashing 3ft', material_cost: 5.46, presentation_group: 'Flashing & Weatherproofing' },
-    'Garage Door Head Flashing Count': { sku: 'FLASH-HEAD-GAR', description: 'Garage Door Head Flashing', material_cost: 6.58, presentation_group: 'Flashing & Weatherproofing' },
-    'Swing Door Head Flashing Count': { sku: 'FLASH-HEAD-DOOR', description: 'Door Head Flashing 3ft', material_cost: 5.46, presentation_group: 'Flashing & Weatherproofing' },
-    'Foundation Vent Count': { sku: 'VENT-FOUNDATION', description: 'Foundation Vent', material_cost: 12.00, presentation_group: 'Other Materials' },
-    '1" x 3" Top-Out Trim': { sku: 'WW-1X3-12', description: '1x3 WhiteWood Top-Out 12ft', material_cost: 7.82, presentation_group: 'Trim & Corners' },
-    '1" x 2" WW Trim': { sku: 'WW-1X2-16', description: '1x2 WhiteWood Top-Out 16ft', material_cost: 7.05, presentation_group: 'Trim & Corners' },
-  };
+  // detectionCountPricingMap is already loaded from DB above.
+  // Keys are both class_name ('corbel') and display_name ('Corbel Count', '1" x 6" WW Trim Count').
+  // Unknown keys now emit $0 VERIFY PRICING line items instead of being silently dropped.
 
   if (detectionCounts) {
     for (const [key, detection] of Object.entries(detectionCounts)) {
       if (handledDetectionKeys.has(key.toLowerCase())) continue; // Already processed above
       if (!detection || (detection.count || 0) === 0) continue;
 
-      const pricing = bluebeamPricing[key];
+      const pricing = detectionCountPricingMap.get(key);
       if (pricing) {
-        console.log(`📦 Bluebeam count item: "${key}" × ${detection.count} @ $${pricing.material_cost}/ea`);
-        const extended = detection.count * pricing.material_cost;
+        console.log(`📦 Bluebeam count item: "${key}" × ${detection.count} @ $${pricing.material_cost}/ea (DB)`);
+        const materialExtended = detection.count * pricing.material_cost;
+        const laborExtended = detection.count * (pricing.labor_cost ?? 0);
         lineItems.push({
           description: pricing.description,
           sku: pricing.sku,
           quantity: detection.count,
-          unit: 'ea',
+          unit: pricing.unit ?? 'ea',
           category: 'bluebeam_count',
           presentation_group: pricing.presentation_group,
           item_order: 99,
           material_unit_cost: pricing.material_cost,
-          material_extended: extended,
-          labor_unit_cost: 0,
-          labor_extended: 0,
-          total_extended: extended,
+          material_extended: materialExtended,
+          labor_unit_cost: pricing.labor_cost ?? 0,
+          labor_extended: laborExtended,
+          total_extended: materialExtended + laborExtended,
           calculation_source: 'auto-scope',
           notes: `Bluebeam count: ${key} = ${detection.count}`,
         });
-        totalMaterialCost += extended;
+        totalMaterialCost += materialExtended;
       } else {
-        console.log(`⚠️ Unknown Bluebeam count item: "${key}" × ${detection.count} — no pricing found`);
+        // No DB pricing found — emit $0 flagged line item so nothing is silently dropped
+        console.warn(`⚠️ No DB pricing for Bluebeam count key "${key}" × ${detection.count} — emitting $0 VERIFY PRICING`);
+        lineItems.push({
+          description: `⚠️ ${key} (VERIFY PRICING)`,
+          sku: 'UNMATCHED',
+          quantity: detection.count,
+          unit: detection.unit ?? 'ea',
+          category: 'bluebeam_count',
+          presentation_group: 'Unmatched Items',
+          item_order: 999,
+          material_unit_cost: 0,
+          material_extended: 0,
+          labor_unit_cost: 0,
+          labor_extended: 0,
+          total_extended: 0,
+          calculation_source: 'detection_count_unmatched',
+          notes: `No pricing found for Bluebeam count key: ${key}`,
+        });
       }
     }
   }
