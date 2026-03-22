@@ -186,10 +186,8 @@ export async function loadDetectionCountPricing(): Promise<Map<string, Detection
     console.log(`🔍 [detectionCountPricing] mappings query returned ${mappings?.length ?? 0} rows`);
 
     if (!mappings || mappings.length === 0) {
-      console.log('ℹ️ [detectionCountPricing] No active mappings with default_product_sku found');
-      detectionPricingCache = new Map();
-      cacheTimestamp = Date.now();
-      return detectionPricingCache;
+      console.log('ℹ️ [detectionCountPricing] No active mappings with default_product_sku found — NOT caching empty result');
+      return new Map(); // Do NOT cache empty — retry on next request in case of transient failure
     }
 
     // Reuse the shared pricing cache (already warm from main calculation flow)
