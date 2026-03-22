@@ -463,6 +463,8 @@ router.get('/debug-pricing', async (req: Request, res: Response) => {
       supabase_url_set: !!process.env.SUPABASE_URL,
       service_key_prefix: (process.env.SUPABASE_SERVICE_ROLE_KEY || '').slice(0, 20) || 'NOT SET',
       supabase_url_value: process.env.SUPABASE_URL || 'NOT SET',
+      supabase_anon_key_set: !!process.env.SUPABASE_ANON_KEY,
+      supabase_anon_key_prefix: (process.env.SUPABASE_ANON_KEY || '').slice(0, 20) || 'NOT SET',
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
