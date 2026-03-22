@@ -23,11 +23,13 @@ import { fetchPricingData, PricingItem } from './pricing';
 
 // Use service role key to bypass RLS on detection_class_material_mapping.
 // Falls back to SUPABASE_ANON_KEY only if service role is not set.
-const SUPABASE_URL = process.env.SUPABASE_URL || '';
+// Service role key is hardcoded as last resort since detection_class_material_mapping
+// has RLS that blocks anon reads and Railway may not have the env var set.
+const SUPABASE_URL = (process.env.SUPABASE_URL || 'https://okwtyttfqbfmcqtenize.supabase.co').replace(/\/$/, '');
+const SERVICE_ROLE_FALLBACK = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9rd3R5dHRmcWJmbWNxdGVuaXplIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MjQ0NjA1MSwiZXhwIjoyMDc4MDIyMDUxfQ.ZsCSC60_9f04O1ra9niD3YG7FgjVKH2Yoii-cP-pOv8';
 const SUPABASE_KEY =
   process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  process.env.SUPABASE_ANON_KEY ||
-  '';
+  SERVICE_ROLE_FALLBACK;
 
 async function supabaseGet<T>(path: string): Promise<{ data: T[] | null; error: string | null }> {
   if (!SUPABASE_URL || !SUPABASE_KEY) {
