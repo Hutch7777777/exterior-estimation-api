@@ -55,7 +55,7 @@ router.post('/calculate', async (req: Request, res: Response) => {
 router.post('/calculate-priced', async (req: Request, res: Response) => {
   try {
     const request = req.body as CalculationRequest;
-    const markupRate = req.body.markup_rate || 0.15;
+    const markupRate = req.body.markup_rate || 0.10;
 
     // Basic validation
     if (!request.measurements) {

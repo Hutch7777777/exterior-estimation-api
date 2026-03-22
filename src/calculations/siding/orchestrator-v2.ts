@@ -834,7 +834,7 @@ export async function calculateWithAutoScopeV2(
   extractionId?: string,
   webhookMeasurements?: WebhookMeasurements,
   organizationId?: string,
-  markupRate: number = 0.15,
+  markupRate: number = 0.10,
   detectionCounts?: Record<string, {
     count: number;
     total_lf?: number;
