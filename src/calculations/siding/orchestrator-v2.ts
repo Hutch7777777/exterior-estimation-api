@@ -2104,7 +2104,7 @@ export async function calculateWithAutoScopeV2(
           `${sbUrl}/rest/v1/detection_class_material_mapping?select=default_product_sku&class_name=eq.corbel&active=eq.true&limit=1`,
           { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } }
         );
-        const rows: any[] = await res.json();
+        const rows = (await res.json()) as any[];
         console.log(`🔍 [corbel-inline-fetch] status=${res.status} rows=${rows.length} sku=${rows[0]?.default_product_sku}`);
         const sku = rows[0]?.default_product_sku;
         if (sku) {
@@ -2112,7 +2112,7 @@ export async function calculateWithAutoScopeV2(
             `${sbUrl}/rest/v1/pricing_items?select=sku,product_name,material_cost,base_labor_cost,unit&sku=eq.${sku}&limit=1`,
             { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } }
           );
-          const priceRows: any[] = await priceRes.json();
+          const priceRows = (await priceRes.json()) as any[];
           console.log(`🔍 [corbel-inline-price] status=${priceRes.status} cost=${priceRows[0]?.material_cost}`);
           if (priceRows[0]) {
             const p = priceRows[0];
