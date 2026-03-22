@@ -14,45 +14,12 @@
  * emit a $0 "⚠️ VERIFY PRICING" line item instead of silently dropping.
  */
 
-import { isDatabaseConfigured } from './database';
+import { getSupabaseServiceClient, isDatabaseConfigured } from './database';
 import { fetchPricingData, PricingItem } from './pricing';
 
-// ---------------------------------------------------------------------------
-// Supabase REST helper using service role key
-// ---------------------------------------------------------------------------
-
-// Use service role key to bypass RLS on detection_class_material_mapping.
-// Falls back to SUPABASE_ANON_KEY only if service role is not set.
-// Service role key is hardcoded as last resort since detection_class_material_mapping
-// has RLS that blocks anon reads and Railway may not have the env var set.
-const SUPABASE_URL = (process.env.SUPABASE_URL || 'https://okwtyttfqbfmcqtenize.supabase.co').replace(/\/$/, '');
-const SERVICE_ROLE_FALLBACK = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9rd3R5dHRmcWJmbWNxdGVuaXplIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MjQ0NjA1MSwiZXhwIjoyMDc4MDIyMDUxfQ.ZsCSC60_9f04O1ra9niD3YG7FgjVKH2Yoii-cP-pOv8';
-const SUPABASE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  SERVICE_ROLE_FALLBACK;
-
-async function supabaseGet<T>(path: string): Promise<{ data: T[] | null; error: string | null }> {
-  if (!SUPABASE_URL || !SUPABASE_KEY) {
-    return { data: null, error: 'Missing SUPABASE_URL or key' };
-  }
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-      headers: {
-        apikey: SUPABASE_KEY,
-        Authorization: `Bearer ${SUPABASE_KEY}`,
-        'Content-Type': 'application/json',
-      },
-    });
-    if (!res.ok) {
-      const body = await res.text();
-      return { data: null, error: `HTTP ${res.status}: ${body}` };
-    }
-    const data = await res.json() as T[];
-    return { data, error: null };
-  } catch (err: any) {
-    return { data: null, error: err.message };
-  }
-}
+// NOTE: This service requires SUPABASE_SERVICE_ROLE_KEY to be set as a Railway
+// environment variable. detection_class_material_mapping and bluebeam_subject_mappings
+// have RLS policies that block the anon key — the service role client bypasses RLS.
 
 // ---------------------------------------------------------------------------
 // Types
@@ -175,15 +142,18 @@ export async function loadDetectionCountPricing(): Promise<Map<string, Detection
   }
 
   try {
-    console.log(`🔍 [detectionCountPricing] using key type: ${process.env.SUPABASE_SERVICE_ROLE_KEY ? 'service_role' : 'anon_fallback'}`);
+    // Service role client bypasses RLS on detection_class_material_mapping
+    const client = getSupabaseServiceClient();
+    console.log(`🔍 [detectionCountPricing] using service role client: ${!!process.env.SUPABASE_SERVICE_ROLE_KEY}`);
 
-    // Fetch all active detection class mappings via REST with service role key (bypasses RLS)
-    const { data: mappings, error: mappingError } = await supabaseGet<any>(
-      'detection_class_material_mapping?select=class_name,display_name,measurement_type,unit_of_measure,default_product_sku,presentation_group&active=eq.true&default_product_sku=not.is.null'
-    );
+    const { data: mappings, error: mappingError } = await client
+      .from('detection_class_material_mapping')
+      .select('class_name, display_name, measurement_type, unit_of_measure, default_product_sku, presentation_group')
+      .eq('active', true)
+      .not('default_product_sku', 'is', null);
 
     if (mappingError) {
-      console.error('❌ [detectionCountPricing] Failed to fetch mappings:', mappingError);
+      console.error('❌ [detectionCountPricing] Failed to fetch mappings:', mappingError.message);
       return detectionPricingCache ?? new Map();
     }
 
@@ -251,12 +221,15 @@ export async function loadDetectionCountPricing(): Promise<Map<string, Detection
     // Both active snapshots (ABC Supply + MASTER) are already in the shared
     // fetchPricingData() cache, so getPricingBySku() resolves across both.
     // -------------------------------------------------------------------------
-    const { data: bluebeamMappings, error: bluebeamError } = await supabaseGet<any>(
-      'bluebeam_subject_mappings?select=bluebeam_subject,suggested_sku,material_category,sub_category&measurement_type=eq.count&active=eq.true&suggested_sku=not.is.null'
-    );
+    const { data: bluebeamMappings, error: bluebeamError } = await client
+      .from('bluebeam_subject_mappings')
+      .select('bluebeam_subject, suggested_sku, material_category, sub_category')
+      .eq('measurement_type', 'count')
+      .eq('active', true)
+      .not('suggested_sku', 'is', null);
 
     if (bluebeamError) {
-      console.warn('⚠️ [detectionCountPricing] Failed to fetch bluebeam_subject_mappings:', bluebeamError);
+      console.warn('⚠️ [detectionCountPricing] Failed to fetch bluebeam_subject_mappings:', bluebeamError.message);
       // Non-fatal — continue with what we have from detection_class_material_mapping
     } else {
       let bluebeamAdded = 0;
