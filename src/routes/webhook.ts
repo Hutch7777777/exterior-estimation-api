@@ -445,6 +445,30 @@ router.get('/health', (req: Request, res: Response) => {
 });
 
 /**
+ * GET /webhook/debug-pricing
+ * Diagnostic: calls loadDetectionCountPricing() in isolation, returns result as JSON.
+ * No surrounding log noise — shows exactly what the fetch returns.
+ * Remove after debugging is complete.
+ */
+router.get('/debug-pricing', async (req: Request, res: Response) => {
+  try {
+    const { loadDetectionCountPricing, lastFetchResult, clearDetectionCountPricingCache } = await import('../services/detectionCountPricing');
+    clearDetectionCountPricingCache(); // force fresh fetch
+    const map = await loadDetectionCountPricing();
+    res.json({
+      map_size: map.size,
+      keys: Array.from(map.keys()),
+      lastFetchResult,
+      service_key_set: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+      supabase_url_set: !!process.env.SUPABASE_URL,
+      service_key_prefix: (process.env.SUPABASE_SERVICE_ROLE_KEY || '').slice(0, 20) || 'NOT SET',
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * POST /webhook/test
  * Test endpoint with sample data
  */
