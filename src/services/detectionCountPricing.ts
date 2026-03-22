@@ -14,12 +14,42 @@
  * emit a $0 "⚠️ VERIFY PRICING" line item instead of silently dropping.
  */
 
-import { getSupabaseServiceClient, isDatabaseConfigured } from './database';
+import { isDatabaseConfigured } from './database';
 import { fetchPricingData, PricingItem } from './pricing';
 
-// NOTE: This service requires SUPABASE_SERVICE_ROLE_KEY to be set as a Railway
-// environment variable. detection_class_material_mapping and bluebeam_subject_mappings
-// have RLS policies that block the anon key — the service role client bypasses RLS.
+// ---------------------------------------------------------------------------
+// Direct REST helper — reads key at call time, bypasses singleton cache issue
+// ---------------------------------------------------------------------------
+// detection_class_material_mapping has RLS that blocks the anon key.
+// We use a direct fetch() with the service role key read fresh from env at call time
+// (not at module load time like the singleton does), so Railway env var changes take effect.
+async function serviceRoleFetch<T>(
+  path: string
+): Promise<{ data: T[] | null; error: string | null }> {
+  const url = process.env.SUPABASE_URL || '';
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
+
+  console.log(`[serviceRoleFetch] key=${key ? key.slice(0,20) + '...' : 'MISSING'} url=${url ? 'ok' : 'MISSING'}`);
+
+  if (!url || !key) return { data: null, error: 'Missing SUPABASE_URL or key' };
+
+  try {
+    const res = await fetch(`${url.replace(/\/$/, '')}/rest/v1/${path}`, {
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      return { data: null, error: `HTTP ${res.status}: ${body}` };
+    }
+    return { data: await res.json() as T[], error: null };
+  } catch (err: any) {
+    return { data: null, error: err.message };
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -143,18 +173,13 @@ export async function loadDetectionCountPricing(): Promise<Map<string, Detection
   }
 
   try {
-    // Service role client bypasses RLS on detection_class_material_mapping
-    const client = getSupabaseServiceClient();
-    console.log(`🔍 [detectionCountPricing] using service role client: ${!!process.env.SUPABASE_SERVICE_ROLE_KEY}`);
-
-    const { data: mappings, error: mappingError } = await client
-      .from('detection_class_material_mapping')
-      .select('class_name, display_name, measurement_type, unit_of_measure, default_product_sku, presentation_group')
-      .eq('active', true)
-      .not('default_product_sku', 'is', null);
+    // Direct REST fetch with key read fresh from env — bypasses singleton/module-load issues
+    const { data: mappings, error: mappingError } = await serviceRoleFetch<any>(
+      'detection_class_material_mapping?select=class_name,display_name,measurement_type,unit_of_measure,default_product_sku,presentation_group&active=eq.true&default_product_sku=not.is.null'
+    );
 
     if (mappingError) {
-      console.error('❌ [detectionCountPricing] Failed to fetch mappings:', mappingError.message);
+      console.error('❌ [detectionCountPricing] Failed to fetch mappings:', mappingError);
       return detectionPricingCache ?? new Map();
     }
 
@@ -222,15 +247,12 @@ export async function loadDetectionCountPricing(): Promise<Map<string, Detection
     // Both active snapshots (ABC Supply + MASTER) are already in the shared
     // fetchPricingData() cache, so getPricingBySku() resolves across both.
     // -------------------------------------------------------------------------
-    const { data: bluebeamMappings, error: bluebeamError } = await client
-      .from('bluebeam_subject_mappings')
-      .select('bluebeam_subject, suggested_sku, material_category, sub_category')
-      .eq('measurement_type', 'count')
-      .eq('active', true)
-      .not('suggested_sku', 'is', null);
+    const { data: bluebeamMappings, error: bluebeamError } = await serviceRoleFetch<any>(
+      'bluebeam_subject_mappings?select=bluebeam_subject,suggested_sku,material_category,sub_category&measurement_type=eq.count&active=eq.true&suggested_sku=not.is.null'
+    );
 
     if (bluebeamError) {
-      console.warn('⚠️ [detectionCountPricing] Failed to fetch bluebeam_subject_mappings:', bluebeamError.message);
+      console.warn('⚠️ [detectionCountPricing] Failed to fetch bluebeam_subject_mappings:', bluebeamError);
       // Non-fatal — continue with what we have from detection_class_material_mapping
     } else {
       let bluebeamAdded = 0;
