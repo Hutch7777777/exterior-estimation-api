@@ -14,8 +14,43 @@
  * emit a $0 "⚠️ VERIFY PRICING" line item instead of silently dropping.
  */
 
-import { getSupabaseServiceClient, isDatabaseConfigured } from './database';
+import { isDatabaseConfigured } from './database';
 import { fetchPricingData, PricingItem } from './pricing';
+
+// ---------------------------------------------------------------------------
+// Supabase REST helper using service role key
+// ---------------------------------------------------------------------------
+
+// Use service role key to bypass RLS on detection_class_material_mapping.
+// Falls back to SUPABASE_ANON_KEY only if service role is not set.
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_ANON_KEY ||
+  '';
+
+async function supabaseGet<T>(path: string): Promise<{ data: T[] | null; error: string | null }> {
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
+    return { data: null, error: 'Missing SUPABASE_URL or key' };
+  }
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+      headers: {
+        apikey: SUPABASE_KEY,
+        Authorization: `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      return { data: null, error: `HTTP ${res.status}: ${body}` };
+    }
+    const data = await res.json() as T[];
+    return { data, error: null };
+  } catch (err: any) {
+    return { data: null, error: err.message };
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -138,15 +173,12 @@ export async function loadDetectionCountPricing(): Promise<Map<string, Detection
   }
 
   try {
-    const client = getSupabaseServiceClient();
-    console.log('🔍 [detectionCountPricing] client obtained, querying detection_class_material_mapping...');
+    console.log(`🔍 [detectionCountPricing] using key type: ${process.env.SUPABASE_SERVICE_ROLE_KEY ? 'service_role' : 'anon_fallback'}`);
 
-    // Fetch all active detection class mappings that have a default SKU
-    const { data: mappings, error: mappingError } = await client
-      .from('detection_class_material_mapping')
-      .select('class_name, display_name, measurement_type, unit_of_measure, default_product_sku, presentation_group')
-      .eq('active', true)
-      .not('default_product_sku', 'is', null);
+    // Fetch all active detection class mappings via REST with service role key (bypasses RLS)
+    const { data: mappings, error: mappingError } = await supabaseGet<any>(
+      'detection_class_material_mapping?select=class_name,display_name,measurement_type,unit_of_measure,default_product_sku,presentation_group&active=eq.true&default_product_sku=not.is.null'
+    );
 
     if (mappingError) {
       console.error('❌ [detectionCountPricing] Failed to fetch mappings:', mappingError.message, mappingError);
@@ -217,12 +249,9 @@ export async function loadDetectionCountPricing(): Promise<Map<string, Detection
     // Both active snapshots (ABC Supply + MASTER) are already in the shared
     // fetchPricingData() cache, so getPricingBySku() resolves across both.
     // -------------------------------------------------------------------------
-    const { data: bluebeamMappings, error: bluebeamError } = await client  // service role — bypasses RLS
-      .from('bluebeam_subject_mappings')
-      .select('bluebeam_subject, suggested_sku, material_category, sub_category')
-      .eq('measurement_type', 'count')
-      .eq('active', true)
-      .not('suggested_sku', 'is', null);
+    const { data: bluebeamMappings, error: bluebeamError } = await supabaseGet<any>(
+      'bluebeam_subject_mappings?select=bluebeam_subject,suggested_sku,material_category,sub_category&measurement_type=eq.count&active=eq.true&suggested_sku=not.is.null'
+    );
 
     if (bluebeamError) {
       console.warn('⚠️ [detectionCountPricing] Failed to fetch bluebeam_subject_mappings:', bluebeamError.message);
