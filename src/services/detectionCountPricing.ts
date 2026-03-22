@@ -81,6 +81,37 @@ function resolvePresentationGroup(className: string, dbValue?: string | null): s
   return PRESENTATION_GROUP_DEFAULTS[className.toLowerCase()] ?? 'Other Materials';
 }
 
+/**
+ * Derive a presentation group for a bluebeam_subject_mappings entry based on
+ * material_category, sub_category, and the subject string itself.
+ * Used only when detection_class_material_mapping has no matching entry.
+ */
+function deriveBluebeamPresentationGroup(
+  materialCategory: string,
+  subCategory: string,
+  subject: string
+): string {
+  const cat = materialCategory.toLowerCase();
+  const sub = subCategory.toLowerCase();
+  const subj = subject.toLowerCase();
+
+  if (cat === 'soffit' || subj.includes('soffit') || subj.includes('fascia')) return 'Soffit & Fascia';
+  if (cat === 'accessories' && (sub === 'flashing' || subj.includes('flashing'))) return 'Flashing & Weatherproofing';
+  if (cat === 'accessories' && (sub === 'vent' || subj.includes('vent'))) return 'Other Materials';
+  if (cat === 'accessories' && sub === 'wrb') return 'Flashing & Weatherproofing';
+  if (cat === 'trim' || cat === 'lap_siding' || cat === 'panel_siding') {
+    if (subj.includes('window') || subj.includes('head') || subj.includes('sill') || subj.includes('jamb')) {
+      return 'Window Trims';
+    }
+    if (subj.includes('corner')) return 'Trim & Corners';
+    if (subj.includes('belly') || subj.includes('band')) return 'Horizontal Trims';
+    return 'Trim & Corners';
+  }
+  if (subj.includes('corbel') || subj.includes('bracket') || subj.includes('shutter')) return 'Architectural Details';
+  if (subj.includes('gutter') || subj.includes('downspout')) return 'Gutters & Drainage';
+  return 'Other Materials';
+}
+
 // ---------------------------------------------------------------------------
 // Main loader
 // ---------------------------------------------------------------------------
@@ -167,9 +198,82 @@ export async function loadDetectionCountPricing(): Promise<Map<string, Detection
       }
     }
 
+    // -------------------------------------------------------------------------
+    // SECOND PASS: bluebeam_subject_mappings (count-type entries with a suggested_sku)
+    //
+    // Detection count keys from Bluebeam imports arrive as the raw annotation
+    // subject string (e.g. '1" x 6" WW Trim Count', 'Decorative Corbel Count').
+    // These won't match detection_class_material_mapping class_names, so we load
+    // bluebeam_subject_mappings as a second source, keyed by bluebeam_subject.
+    //
+    // Priority: detection_class_material_mapping wins — we skip any bluebeam_subject
+    // that is already in the map (already covered by class_name or display_name).
+    //
+    // Both active snapshots (ABC Supply + MASTER) are already in the shared
+    // fetchPricingData() cache, so getPricingBySku() resolves across both.
+    // -------------------------------------------------------------------------
+    const { data: bluebeamMappings, error: bluebeamError } = await client
+      .from('bluebeam_subject_mappings')
+      .select('bluebeam_subject, suggested_sku, material_category, sub_category')
+      .eq('measurement_type', 'count')
+      .eq('active', true)
+      .not('suggested_sku', 'is', null);
+
+    if (bluebeamError) {
+      console.warn('⚠️ [detectionCountPricing] Failed to fetch bluebeam_subject_mappings:', bluebeamError.message);
+      // Non-fatal — continue with what we have from detection_class_material_mapping
+    } else {
+      let bluebeamAdded = 0;
+      let bluebeamSkipped = 0;
+      let bluebeamMissing = 0;
+
+      for (const mapping of bluebeamMappings ?? []) {
+        const subject = mapping.bluebeam_subject as string;
+        const sku = mapping.suggested_sku as string;
+
+        // detection_class_material_mapping takes priority
+        if (result.has(subject)) {
+          bluebeamSkipped++;
+          continue;
+        }
+
+        // Reuse shared pricing cache — covers both active snapshots
+        const pricing = pricingBySkus.get(sku);
+        if (!pricing) {
+          console.warn(
+            `⚠️ [detectionCountPricing] bluebeam_subject "${subject}" → SKU "${sku}" not found in pricing_items`
+          );
+          bluebeamMissing++;
+          continue;
+        }
+
+        // Derive presentation group from material_category / sub_category
+        const rawCategory = (mapping.material_category as string | null) ?? '';
+        const rawSub = (mapping.sub_category as string | null) ?? '';
+        const derivedGroup = deriveBluebeamPresentationGroup(rawCategory, rawSub, subject);
+
+        result.set(subject, {
+          class_name: subject,
+          display_name: subject,
+          sku: pricing.sku,
+          description: pricing.product_name,
+          material_cost: parseFloat(String(pricing.material_cost ?? 0)),
+          labor_cost: parseFloat(String(pricing.base_labor_cost ?? 0)),
+          unit: pricing.unit ?? 'ea',
+          presentation_group: derivedGroup,
+          measurement_type: 'count',
+        });
+        bluebeamAdded++;
+      }
+
+      console.log(
+        `✅ [detectionCountPricing] Bluebeam subjects: ${bluebeamAdded} added, ${bluebeamSkipped} skipped (already mapped), ${bluebeamMissing} missing SKU`
+      );
+    }
+
     detectionPricingCache = result;
     cacheTimestamp = Date.now();
-    console.log(`✅ [detectionCountPricing] Loaded ${result.size} detection count pricing entries`);
+    console.log(`✅ [detectionCountPricing] Loaded ${result.size} total entries (class + bluebeam subjects)`);
     return result;
   } catch (err: any) {
     console.error('❌ [detectionCountPricing] Exception loading pricing:', err.message);
