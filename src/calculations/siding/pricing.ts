@@ -162,7 +162,7 @@ export async function generateLaborItems(
 export function calculateTotals(
   materials: PricedMaterialLineItem[],
   labor: LaborLineItem[],
-  markupRate: number = 0.15
+  markupRate: number = 0.10
 ): TakeoffTotals {
   const material_subtotal = materials
     .filter(m => m.extended_cost !== undefined)

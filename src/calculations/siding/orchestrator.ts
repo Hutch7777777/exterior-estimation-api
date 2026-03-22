@@ -227,7 +227,7 @@ export async function calculateSiding(
  */
 export async function calculateSidingWithPricing(
   request: CalculationRequest,
-  markupRate: number = 0.15
+  markupRate: number = 0.10
 ): Promise<PricedCalculationResponse> {
   // Get base calculation
   const baseResult = await calculateSiding(request);
@@ -364,7 +364,7 @@ export async function calculateFromMaterialAssignments(
   materialAssignments: MaterialAssignment[],
   organizationId?: string,
   facadeSqft?: number,
-  markupRate: number = 0.15
+  markupRate: number = 0.10
 ): Promise<MaterialAssignmentResult> {
   const warnings: Array<{ code: string; message: string }> = [];
 

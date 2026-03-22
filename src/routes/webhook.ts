@@ -41,7 +41,7 @@ router.post('/siding-estimator', async (req: Request, res: Response) => {
       return;
     }
 
-    const markupRate = webhookRequest.markup_rate || 0.15;
+    const markupRate = webhookRequest.markup_rate || 0.10;
 
     // =========================================================================
     // PATH 1: ID-Based Pricing with Auto-Scope V2 (material_assignments from Detection Editor)
@@ -259,7 +259,7 @@ router.post('/calculate-siding', async (req: Request, res: Response) => {
       return;
     }
 
-    const markupRate = webhookRequest.markup_rate || 0.15;
+    const markupRate = webhookRequest.markup_rate || 0.10;
 
     // PATH 1: ID-Based Pricing with Auto-Scope V2
     if (webhookRequest.material_assignments && webhookRequest.material_assignments.length > 0) {
@@ -500,7 +500,7 @@ router.post('/test', async (req: Request, res: Response) => {
     },
     include_pricing: true,
     include_labor: true,
-    markup_rate: 0.15
+    markup_rate: 0.10
   };
 
   // Use the test request or override with body
