@@ -187,7 +187,7 @@ export interface CombinedLineItem {
   is_colorplus?: boolean;  // Flag for ColorPlus premium labor
 
   // Metadata
-  calculation_source: 'assigned_material' | 'auto-scope' | 'bluebeam_unmatched';
+  calculation_source: 'assigned_material' | 'auto-scope' | 'bluebeam_unmatched' | 'detection_count_unmatched';
   pricing_item_id?: string;
   detection_id?: string;
   detection_ids?: string[];
