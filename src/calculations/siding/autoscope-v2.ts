@@ -11,7 +11,7 @@
  */
 
 import { getSupabaseClient, isDatabaseConfigured } from '../../services/database';
-import { getPricingBySkus, getPricingByIds, calculateTotalLabor } from '../../services/pricing';
+import { getPricingBySkus, getPricingByIds, calculateTotalLabor, fetchPricingData } from '../../services/pricing';
 import {
   MeasurementContext,
   AutoScopeLineItem,
@@ -205,9 +205,11 @@ export function resolveConfigValue(
 // Maps width (inches) + finish to actual pricing_items SKU
 // ============================================================================
 
-const HARDIE_TRIM_SKU_MAP: Record<string, Record<string, string>> = {
+// HARDIE_TRIM_SKU_MAP removed — resolved via pricing_items cache using is_colorplus + width matching.
+// Fallback SKUs used only when no DB match found:
+const HARDIE_TRIM_FALLBACK_SKU: Record<string, Record<string, string>> = {
   '3.5': { primed: 'HT-54-35-12-PR', colorplus: 'HT-54-35-12-CP' },
-  '4':   { primed: 'CASING-5/4X4X12', colorplus: 'HT-54-4-12-CP' },
+  '4':   { primed: 'CASING-5/4X4X12', colorplus: 'CASING-5/4X4X12' }, // no 4" CP in DB yet
   '5.5': { primed: 'HT-54-55-12-PR', colorplus: 'HT-54-55-12-CP' },
   '6':   { primed: 'JH-TRIM-BB-6-PR', colorplus: 'JH-TRIM-BB-6-CP' },
   '7.25': { primed: 'HT-54-725-12-PR', colorplus: 'HT-54-725-12-CP' },
@@ -220,7 +222,7 @@ const HARDIE_TRIM_SKU_MAP: Record<string, Record<string, string>> = {
  * @param estimateSettings - EstimateSettings from frontend
  * @param defaultSku - Fallback SKU if settings not found
  */
-function resolveHardieTrimSku(
+async function resolveHardieTrimSku(
   trimType: 'window' | 'door',
   config: Record<string, any> | undefined,
   estimateSettings: EstimateSettings | null,
@@ -259,15 +261,50 @@ function resolveHardieTrimSku(
   finish = finish.toLowerCase();
   if (finish === 'color plus' || finish === 'color-plus') finish = 'colorplus';
 
-  // Look up SKU from map
-  const widthMap = HARDIE_TRIM_SKU_MAP[width];
+  // ── DB lookup via shared pricing cache (already warm from main calculation flow) ──
+  // Match: category='trim', 5/4 thickness (HT-54 or JH-TRIM-BB or similar),
+  // is_colorplus matches finish, product_name contains the width dimension.
+  const isColorPlus = finish === 'colorplus';
+  try {
+    const pricingCache = await fetchPricingData();
+    const widthPattern = width.replace('.', '\\.'); // e.g. "7.25" → "7\\.25"
+    const candidates = Array.from(pricingCache.values()).filter(item => {
+      if (item.category?.toLowerCase() !== 'trim') return false;
+      if (!!item.is_colorplus !== isColorPlus) return false;
+      // Match width in product_name: e.g. "5/4 x 3.5"" or "x 3.5\""
+      const name = item.product_name || '';
+      const widthNum = parseFloat(width);
+      // Try matching the width as a number appearing in the product name
+      const nameHasWidth =
+        new RegExp(`[x×]\\s*${widthPattern}[\\s"']`, 'i').test(name) ||
+        new RegExp(`\\b${widthPattern}[\\s"']`, 'i').test(name);
+      if (!nameHasWidth) return false;
+      // Prefer 5/4 thickness (HT-54 / JH-TRIM-BB) over 4/4 for trim casing
+      const sku = item.sku || '';
+      const is54 = sku.includes('HT-54') || sku.includes('JH-TRIM-BB') || sku.includes('54X') || name.includes('5/4');
+      return is54;
+    });
+
+    if (candidates.length > 0) {
+      // Prefer exact width match; if multiple, take first (most specific SKU)
+      const best = candidates[0];
+      console.log(`  🎯 Resolved ${trimType} trim: ${width}" ${finish} → ${best.sku} (DB cache, ${candidates.length} candidates)`);
+      return { sku: best.sku, width, finish };
+    }
+    console.warn(`  ⚠️ No DB match for ${trimType} trim width=${width}" finish=${finish} — trying fallback map`);
+  } catch (err: any) {
+    console.warn(`  ⚠️ fetchPricingData() failed in resolveHardieTrimSku: ${err.message}`);
+  }
+
+  // ── Fallback: static map (last resort if DB cache miss) ──
+  const widthMap = HARDIE_TRIM_FALLBACK_SKU[width];
   if (widthMap && widthMap[finish]) {
-    console.log(`  🎯 Resolved ${trimType} trim: ${width}" ${finish} → ${widthMap[finish]}`);
+    console.log(`  ↩️ Fallback ${trimType} trim: ${width}" ${finish} → ${widthMap[finish]}`);
     return { sku: widthMap[finish], width, finish };
   }
 
-  // Fallback to default SKU
-  console.log(`  ⚠️ Could not resolve ${trimType} trim SKU for width=${width}, finish=${finish}. Using default: ${defaultSku}`);
+  // ── Final fallback: use supplied default SKU ──
+  console.warn(`  ⚠️ Could not resolve ${trimType} trim SKU for width=${width}, finish=${finish}. Using default: ${defaultSku}`);
   return { sku: defaultSku, width, finish };
 }
 
@@ -2302,10 +2339,10 @@ export async function generateAutoScopeItemsV2(
       const isDoorTrim = category.includes('door');
 
       if (isWindowTrim) {
-        const resolved = resolveHardieTrimSku('window', options?.config, estimateSettings, rule.material_sku);
+        const resolved = await resolveHardieTrimSku('window', options?.config, estimateSettings, rule.material_sku);
         resolvedSkuMap.set(rule.rule_id, resolved);
       } else if (isDoorTrim) {
-        const resolved = resolveHardieTrimSku('door', options?.config, estimateSettings, rule.material_sku);
+        const resolved = await resolveHardieTrimSku('door', options?.config, estimateSettings, rule.material_sku);
         resolvedSkuMap.set(rule.rule_id, resolved);
       }
     }
