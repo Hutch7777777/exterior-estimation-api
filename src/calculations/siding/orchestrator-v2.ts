@@ -2091,6 +2091,7 @@ export async function calculateWithAutoScopeV2(
   const columnCount = detectionCounts?.column?.count || 0;
 
   if (corbelCount > 0) {
+    console.log(`SERVICE KEY EXISTS: ${!!process.env.SUPABASE_SERVICE_ROLE_KEY}`);
     console.log(`🔍 [corbel-debug] detectionCountPricingMap size: ${detectionCountPricingMap.size}, keys: [${Array.from(detectionCountPricingMap.keys()).slice(0,10).join(', ')}]`);
     const corbelPricing = detectionCountPricingMap.get('corbel');
     const corbelCost = corbelPricing?.material_cost ?? 0;

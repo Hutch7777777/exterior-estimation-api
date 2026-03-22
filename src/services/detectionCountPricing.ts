@@ -134,6 +134,7 @@ export async function loadDetectionCountPricing(): Promise<Map<string, Detection
     return detectionPricingCache;
   }
 
+  console.log(`SERVICE KEY EXISTS: ${!!process.env.SUPABASE_SERVICE_ROLE_KEY}`);
   console.log(`🔍 [detectionCountPricing] load called, isDatabaseConfigured=${isDatabaseConfigured()}`);
 
   if (!isDatabaseConfigured()) {
