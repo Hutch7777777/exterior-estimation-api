@@ -34,18 +34,21 @@ async function serviceRoleFetch<T>(
   if (!url || !key) return { data: null, error: 'Missing SUPABASE_URL or key' };
 
   try {
-    const res = await fetch(`${url.replace(/\/$/, '')}/rest/v1/${path}`, {
+    const fullUrl = `${url.replace(/\/$/, '')}/rest/v1/${path}`;
+    const keyRole = key.length > 100 ? key.slice(40, 60) : 'short?'; // middle of JWT = role claim area
+    const isServiceRole = keyRole.includes('c2Vyd');  // base64 of "serv" in "service_role"
+    const res = await fetch(fullUrl, {
       headers: {
         apikey: key,
         Authorization: `Bearer ${key}`,
         'Content-Type': 'application/json',
       },
     });
-    if (!res.ok) {
-      const body = await res.text();
-      return { data: null, error: `HTTP ${res.status}: ${body}` };
-    }
-    return { data: await res.json() as T[], error: null };
+    const rows = await res.json() as T[];
+    // Single-line summary that's compact enough to survive rate-limiting
+    console.log(`[SRF] ${res.status} rows=${Array.isArray(rows)?rows.length:'?'} svcRole=${isServiceRole}`);
+    if (!res.ok) return { data: null, error: `HTTP ${res.status}` };
+    return { data: rows, error: null };
   } catch (err: any) {
     return { data: null, error: err.message };
   }

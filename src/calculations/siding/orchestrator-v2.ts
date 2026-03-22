@@ -917,9 +917,11 @@ export async function calculateWithAutoScopeV2(
   let detectionCountPricingMap = new Map<string, DetectionCountPricing>();
   try {
     detectionCountPricingMap = await loadDetectionCountPricing();
-    console.log(`📦 [detectionCountPricing] ${detectionCountPricingMap.size} entries loaded`);
+    // This log appears BEFORE the heavy auto-scope rule logging, may be rate-limited out
+    // The corbel-debug log below is the reliable signal
+    console.log(`📦 [DCP] loaded=${detectionCountPricingMap.size}`);
   } catch (err: any) {
-    console.error('⚠️ [detectionCountPricing] Failed to load, proceeding without:', err.message);
+    console.error(`⚠️ [DCP] LOAD FAILED: ${err.message}`);
   }
 
   // =========================================================================
@@ -2091,8 +2093,10 @@ export async function calculateWithAutoScopeV2(
   const columnCount = detectionCounts?.column?.count || 0;
 
   if (corbelCount > 0) {
-    console.log(`SERVICE KEY EXISTS: ${!!process.env.SUPABASE_SERVICE_ROLE_KEY}`);
-    console.log(`🔍 [corbel-debug] detectionCountPricingMap size: ${detectionCountPricingMap.size}, keys: [${Array.from(detectionCountPricingMap.keys()).slice(0,10).join(', ')}]`);
+    console.log(`🔍 [corbel-debug] map=${detectionCountPricingMap.size} SERVICE_KEY=${!!process.env.SUPABASE_SERVICE_ROLE_KEY} SUPABASE_URL=${!!(process.env.SUPABASE_URL)}`);
+    if (detectionCountPricingMap.size > 0) {
+      console.log(`🔍 [corbel-debug] keys: ${Array.from(detectionCountPricingMap.keys()).slice(0,10).join(', ')}`);
+    }
     const corbelPricing = detectionCountPricingMap.get('corbel');
     const corbelCost = corbelPricing?.material_cost ?? 0;
     const corbelSku = corbelPricing?.sku ?? 'CORBEL-GLULAM';
