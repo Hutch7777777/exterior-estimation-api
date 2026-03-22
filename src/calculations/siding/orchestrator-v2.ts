@@ -2093,11 +2093,41 @@ export async function calculateWithAutoScopeV2(
   const columnCount = detectionCounts?.column?.count || 0;
 
   if (corbelCount > 0) {
-    console.log(`🔍 [corbel-debug] map=${detectionCountPricingMap.size} SK=${!!process.env.SUPABASE_SERVICE_ROLE_KEY} URL=${!!process.env.SUPABASE_URL} fetch="${lastFetchResult}"`);
-    if (detectionCountPricingMap.size > 0) {
-      console.log(`🔍 [corbel-debug] keys: ${Array.from(detectionCountPricingMap.keys()).slice(0,10).join(', ')}`);
+    // Hard bypass: if detectionCountPricingMap is empty (load failed), fetch corbel pricing inline
+    // One direct fetch, no cache, no singleton — guaranteed to use current env vars
+    let corbelPricing = detectionCountPricingMap.get('corbel');
+    if (!corbelPricing) {
+      try {
+        const sbUrl = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
+        const sbKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
+        const res = await fetch(
+          `${sbUrl}/rest/v1/detection_class_material_mapping?select=default_product_sku&class_name=eq.corbel&active=eq.true&limit=1`,
+          { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } }
+        );
+        const rows: any[] = await res.json();
+        console.log(`🔍 [corbel-inline-fetch] status=${res.status} rows=${rows.length} sku=${rows[0]?.default_product_sku}`);
+        const sku = rows[0]?.default_product_sku;
+        if (sku) {
+          const priceRes = await fetch(
+            `${sbUrl}/rest/v1/pricing_items?select=sku,product_name,material_cost,base_labor_cost,unit&sku=eq.${sku}&limit=1`,
+            { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } }
+          );
+          const priceRows: any[] = await priceRes.json();
+          console.log(`🔍 [corbel-inline-price] status=${priceRes.status} cost=${priceRows[0]?.material_cost}`);
+          if (priceRows[0]) {
+            const p = priceRows[0];
+            corbelPricing = {
+              class_name: 'corbel', display_name: 'Corbel', sku: p.sku,
+              description: p.product_name, material_cost: parseFloat(p.material_cost ?? 0),
+              labor_cost: parseFloat(p.base_labor_cost ?? 0), unit: p.unit ?? 'ea',
+              presentation_group: 'Architectural Details', measurement_type: 'count' as const,
+            };
+          }
+        }
+      } catch (err: any) {
+        console.error(`❌ [corbel-inline-fetch] failed: ${err.message}`);
+      }
     }
-    const corbelPricing = detectionCountPricingMap.get('corbel');
     const corbelCost = corbelPricing?.material_cost ?? 0;
     const corbelSku = corbelPricing?.sku ?? 'CORBEL-GLULAM';
     const corbelDescription = corbelPricing?.description ?? 'Glu-Lam Corbel Assembly';
