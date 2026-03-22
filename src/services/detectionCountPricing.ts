@@ -14,7 +14,7 @@
  * emit a $0 "⚠️ VERIFY PRICING" line item instead of silently dropping.
  */
 
-import { getSupabaseClient, isDatabaseConfigured } from './database';
+import { getSupabaseServiceClient, isDatabaseConfigured } from './database';
 import { fetchPricingData, PricingItem } from './pricing';
 
 // ---------------------------------------------------------------------------
@@ -136,7 +136,9 @@ export async function loadDetectionCountPricing(): Promise<Map<string, Detection
   }
 
   try {
-    const client = getSupabaseClient();
+    // Use service role client — detection_class_material_mapping has RLS that
+    // blocks the anon key. Service role bypasses RLS for server-side reads.
+    const client = getSupabaseServiceClient();
 
     // Fetch all active detection class mappings that have a default SKU
     const { data: mappings, error: mappingError } = await client
@@ -212,7 +214,7 @@ export async function loadDetectionCountPricing(): Promise<Map<string, Detection
     // Both active snapshots (ABC Supply + MASTER) are already in the shared
     // fetchPricingData() cache, so getPricingBySku() resolves across both.
     // -------------------------------------------------------------------------
-    const { data: bluebeamMappings, error: bluebeamError } = await client
+    const { data: bluebeamMappings, error: bluebeamError } = await client  // service role — bypasses RLS
       .from('bluebeam_subject_mappings')
       .select('bluebeam_subject, suggested_sku, material_category, sub_category')
       .eq('measurement_type', 'count')
