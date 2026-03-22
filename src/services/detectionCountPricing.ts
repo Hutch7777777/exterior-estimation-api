@@ -130,15 +130,16 @@ export async function loadDetectionCountPricing(): Promise<Map<string, Detection
     return detectionPricingCache;
   }
 
+  console.log(`🔍 [detectionCountPricing] load called, isDatabaseConfigured=${isDatabaseConfigured()}`);
+
   if (!isDatabaseConfigured()) {
     console.warn('⚠️ [detectionCountPricing] Database not configured — returning empty map');
     return new Map();
   }
 
   try {
-    // Use service role client — detection_class_material_mapping has RLS that
-    // blocks the anon key. Service role bypasses RLS for server-side reads.
     const client = getSupabaseServiceClient();
+    console.log('🔍 [detectionCountPricing] client obtained, querying detection_class_material_mapping...');
 
     // Fetch all active detection class mappings that have a default SKU
     const { data: mappings, error: mappingError } = await client
@@ -148,9 +149,11 @@ export async function loadDetectionCountPricing(): Promise<Map<string, Detection
       .not('default_product_sku', 'is', null);
 
     if (mappingError) {
-      console.error('❌ [detectionCountPricing] Failed to fetch mappings:', mappingError.message);
+      console.error('❌ [detectionCountPricing] Failed to fetch mappings:', mappingError.message, mappingError);
       return detectionPricingCache ?? new Map();
     }
+
+    console.log(`🔍 [detectionCountPricing] mappings query returned ${mappings?.length ?? 0} rows`);
 
     if (!mappings || mappings.length === 0) {
       console.log('ℹ️ [detectionCountPricing] No active mappings with default_product_sku found');
