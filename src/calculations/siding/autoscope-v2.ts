@@ -227,7 +227,7 @@ async function resolveHardieTrimSku(
   config: Record<string, any> | undefined,
   estimateSettings: EstimateSettings | null,
   defaultSku: string
-): { sku: string; width: string; finish: string } {
+): Promise<{ sku: string; width: string; finish: string }> {
   // Try to get width and finish from config (trade_configurations)
   const widthKey = `${trimType}_trim_width`;
   const finishKey = `${trimType}_trim_finish`;
