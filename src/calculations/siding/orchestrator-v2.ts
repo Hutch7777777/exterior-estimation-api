@@ -594,7 +594,7 @@ function calculateInstallationLaborLegacy(
 
   const totalSquares = materials
     .filter(m =>
-      m.presentation_group === 'Siding' ||
+      m.presentation_group === 'cladding' ||
       m.category?.toLowerCase().includes('siding') ||
       m.category === 'lap_siding'
     )
@@ -1699,7 +1699,7 @@ export async function calculateWithAutoScopeV2(
       quantity: boardPieces,
       unit: boardPricing?.unit ?? 'ea',
       category: 'belly_band_trim',
-      presentation_group: 'Belly Band',
+      presentation_group: 'trims',
       item_order: 1,
       material_unit_cost: boardUnitCost,
       material_extended: boardExtended,
@@ -1726,7 +1726,7 @@ export async function calculateWithAutoScopeV2(
       quantity: zFlashingPieces,
       unit: zFlashPricing?.unit ?? 'ea',
       category: 'belly_band_flashing',
-      presentation_group: 'Belly Band',
+      presentation_group: 'metals_flashings',
       item_order: 2,
       material_unit_cost: zFlashingUnitCost,
       material_extended: zFlashingExtended,
@@ -1748,7 +1748,7 @@ export async function calculateWithAutoScopeV2(
       quantity: dripEdgePieces,
       unit: 'ea',
       category: 'belly_band_flashing',
-      presentation_group: 'Belly Band',
+      presentation_group: 'metals_flashings',
       item_order: 3,
       material_unit_cost: dripEdgeUnitCost,
       material_extended: dripEdgeExtended,
@@ -1770,7 +1770,7 @@ export async function calculateWithAutoScopeV2(
       quantity: nailBoxes,
       unit: 'box',
       category: 'belly_band_fastener',
-      presentation_group: 'Belly Band',
+      presentation_group: 'accessories',
       item_order: 4,
       material_unit_cost: nailsUnitCost,
       material_extended: nailsExtended,
@@ -1792,7 +1792,7 @@ export async function calculateWithAutoScopeV2(
       quantity: caulkTubes,
       unit: 'tube',
       category: 'belly_band_caulk',
-      presentation_group: 'Belly Band',
+      presentation_group: 'accessories',
       item_order: 5,
       material_unit_cost: caulkUnitCost,
       material_extended: caulkExtended,
@@ -1811,7 +1811,6 @@ export async function calculateWithAutoScopeV2(
 
   // Debug: Log belly band items in lineItems
   const bellyBandItems = lineItems.filter(item =>
-    item.presentation_group === 'Belly Band' ||
     item.category?.includes('belly_band')
   );
   console.log('📦 Belly Band items in lineItems:', bellyBandItems.length);
@@ -1838,7 +1837,7 @@ export async function calculateWithAutoScopeV2(
       quantity: soffitPanels,
       unit: 'ea',
       category: 'soffit_panel',
-      presentation_group: 'Soffit & Fascia',
+      presentation_group: 'soffit',
       item_order: 1,
       material_unit_cost: soffitPanelCost,
       material_extended: soffitPanelExtended,
@@ -1861,7 +1860,7 @@ export async function calculateWithAutoScopeV2(
       quantity: jChannelPcs,
       unit: 'ea',
       category: 'soffit_trim',
-      presentation_group: 'Soffit & Fascia',
+      presentation_group: 'soffit',
       item_order: 2,
       material_unit_cost: jChannelCost,
       material_extended: jChannelExtended,
@@ -1895,7 +1894,7 @@ export async function calculateWithAutoScopeV2(
       quantity: fasciaPcs,
       unit: 'ea',
       category: 'fascia_board',
-      presentation_group: 'Soffit & Fascia',
+      presentation_group: 'trims',
       item_order: 3,
       material_unit_cost: fasciaCost,
       material_extended: fasciaExtended,
@@ -1917,7 +1916,7 @@ export async function calculateWithAutoScopeV2(
       quantity: fasciaNailBoxes,
       unit: 'box',
       category: 'fascia_fastener',
-      presentation_group: 'Soffit & Fascia',
+      presentation_group: 'accessories',
       item_order: 4,
       material_unit_cost: fasciaNailCost,
       material_extended: fasciaNailExtended,
@@ -1952,7 +1951,7 @@ export async function calculateWithAutoScopeV2(
       quantity: gutterPcs,
       unit: 'ea',
       category: 'gutter',
-      presentation_group: 'Gutters & Downspouts',
+      presentation_group: 'gutters',
       item_order: 1,
       material_unit_cost: gutterCost,
       material_extended: gutterExtended,
@@ -1974,7 +1973,7 @@ export async function calculateWithAutoScopeV2(
       quantity: hangerCount,
       unit: 'ea',
       category: 'gutter_hanger',
-      presentation_group: 'Gutters & Downspouts',
+      presentation_group: 'gutters',
       item_order: 2,
       material_unit_cost: hangerCost,
       material_extended: hangerExtended,
@@ -1997,7 +1996,7 @@ export async function calculateWithAutoScopeV2(
       quantity: endCapCount,
       unit: 'ea',
       category: 'gutter_accessory',
-      presentation_group: 'Gutters & Downspouts',
+      presentation_group: 'gutters',
       item_order: 3,
       material_unit_cost: endCapCost,
       material_extended: endCapExtended,
@@ -2024,7 +2023,7 @@ export async function calculateWithAutoScopeV2(
       quantity: downspoutCount,
       unit: 'ea',
       category: 'downspout',
-      presentation_group: 'Gutters & Downspouts',
+      presentation_group: 'gutters',
       item_order: 4,
       material_unit_cost: downspoutCost,
       material_extended: downspoutExtended,
@@ -2046,7 +2045,7 @@ export async function calculateWithAutoScopeV2(
       quantity: dsBracketCount,
       unit: 'ea',
       category: 'downspout_bracket',
-      presentation_group: 'Gutters & Downspouts',
+      presentation_group: 'gutters',
       item_order: 5,
       material_unit_cost: dsBracketCost,
       material_extended: dsBracketExtended,
@@ -2068,7 +2067,7 @@ export async function calculateWithAutoScopeV2(
       quantity: elbowCount,
       unit: 'ea',
       category: 'downspout',
-      presentation_group: 'Gutters & Downspouts',
+      presentation_group: 'gutters',
       item_order: 6,
       material_unit_cost: elbowCost,
       material_extended: elbowExtended,
@@ -2145,7 +2144,7 @@ export async function calculateWithAutoScopeV2(
       quantity: corbelCount,
       unit: corbelPricing?.unit ?? 'ea',
       category: 'corbel',
-      presentation_group: corbelPricing?.presentation_group ?? 'Architectural Details',
+      presentation_group: corbelPricing?.presentation_group ?? 'accessories',
       item_order: 1,
       material_unit_cost: corbelCost,
       material_extended: corbelExtended,
@@ -2168,7 +2167,7 @@ export async function calculateWithAutoScopeV2(
       quantity: bracketDetectionCount,
       unit: 'ea',
       category: 'bracket',
-      presentation_group: 'Architectural Details',
+      presentation_group: 'accessories',
       item_order: 2,
       material_unit_cost: bracketCost,
       material_extended: bracketExtended,
@@ -2191,7 +2190,7 @@ export async function calculateWithAutoScopeV2(
       quantity: shutterCount,
       unit: 'ea',
       category: 'shutter',
-      presentation_group: 'Architectural Details',
+      presentation_group: 'accessories',
       item_order: 3,
       material_unit_cost: shutterCost,
       material_extended: shutterExtended,
@@ -2214,7 +2213,7 @@ export async function calculateWithAutoScopeV2(
       quantity: postCount,
       unit: 'ea',
       category: 'post',
-      presentation_group: 'Architectural Details',
+      presentation_group: 'accessories',
       item_order: 4,
       material_unit_cost: postCost,
       material_extended: postExtended,
@@ -2237,7 +2236,7 @@ export async function calculateWithAutoScopeV2(
       quantity: columnCount,
       unit: 'ea',
       category: 'column',
-      presentation_group: 'Architectural Details',
+      presentation_group: 'accessories',
       item_order: 5,
       material_unit_cost: columnCost,
       material_extended: columnExtended,
@@ -2342,7 +2341,7 @@ export async function calculateWithAutoScopeV2(
         quantity: pcs1x3,
         unit: 'pieces',
         category: 'corner',
-        presentation_group: 'Trim & Corners',
+        presentation_group: 'trims',
         item_order: 50,
         material_unit_cost: 7.82,
         material_extended: ext1x3,
@@ -2361,7 +2360,7 @@ export async function calculateWithAutoScopeV2(
         quantity: pcs1x4,
         unit: 'pieces',
         category: 'corner',
-        presentation_group: 'Trim & Corners',
+        presentation_group: 'trims',
         item_order: 51,
         material_unit_cost: 9.37,
         material_extended: ext1x4,
@@ -2387,7 +2386,7 @@ export async function calculateWithAutoScopeV2(
         quantity: pcs2x2,
         unit: 'pieces',
         category: 'corner',
-        presentation_group: 'Trim & Corners',
+        presentation_group: 'trims',
         item_order: 52,
         material_unit_cost: 10.42,
         material_extended: ext2x2,
@@ -2453,7 +2452,7 @@ export async function calculateWithAutoScopeV2(
       quantity: totalUnassignedPenetrations,
       unit: 'ea',
       category: 'penetration',
-      presentation_group: 'Flashing & Weatherproofing',
+      presentation_group: 'metals_flashings',
       item_order: 10,
       material_unit_cost: flashBlockCost,
       material_extended: flashBlockExtended,
@@ -2475,7 +2474,7 @@ export async function calculateWithAutoScopeV2(
       quantity: penetrationCaulkTubes,
       unit: 'tube',
       category: 'penetration',
-      presentation_group: 'Flashing & Weatherproofing',
+      presentation_group: 'metals_flashings',
       item_order: 11,
       material_unit_cost: penetrationCaulkCost,
       material_extended: penetrationCaulkExtended,
@@ -2502,7 +2501,7 @@ export async function calculateWithAutoScopeV2(
       quantity: unassignedGableVentCount,
       unit: 'ea',
       category: 'gable_vent',
-      presentation_group: 'Flashing & Weatherproofing',
+      presentation_group: 'metals_flashings',
       item_order: 12,
       material_unit_cost: gableVentTrimCost,
       material_extended: gableVentTrimExtended,
@@ -2840,7 +2839,7 @@ export async function calculateWithAutoScopeV2(
         quantity: quantity,
         unit: unit,
         category: 'unmatched',
-        presentation_group: 'Unmatched Items',
+        presentation_group: 'accessories',
         material_unit_cost: 0,
         material_extended: 0,
         labor_unit_cost: 0,
@@ -3224,118 +3223,62 @@ function calculateMaterialQuantity(
  * Map category to presentation group for consistent Excel output
  */
 function getPresentationGroup(category?: string): string {
-  const groupMap: Record<string, string> = {
-    // Siding & Underlayment
-    'siding': 'Siding',
-    'lap_siding': 'Siding',
-    'siding_panels': 'Siding',
-    'shingle_siding': 'Siding',
-    'panel_siding': 'Siding',
-    'vertical_siding': 'Siding',
-    'artisan': 'Siding',              // Artisan beaded lap siding (James Hardie)
-    'artisan_siding': 'Siding',       // Alternative artisan category
-    'board_batten': 'Siding',
-    'dutch_lap': 'Siding',
-    'shake_siding': 'Siding',
-    'insulated_siding': 'Siding',
-    'shiplap': 'Siding',
-    'corrugated': 'Siding',
-    'r_panel': 'Siding',
+  const groupMappings: Record<string, string> = {
+    // 1. CLADDING
+    'siding': 'cladding',
+    'siding_panels': 'cladding',
+    'lap_siding': 'cladding',
+    'shingle_siding': 'cladding',
+    'panel_siding': 'cladding',
+    'vertical_siding': 'cladding',
 
-    // Trim & Corners
-    'trim': 'Trim',
-    'starter_strip': 'Trim',
-    'j_channel': 'Trim',
-    'frieze_board': 'Trim',
-    'window_trim': 'Trim',
-    'trim_coil': 'Trim',
-    'corner': 'Corners',
-    'corners': 'Corners',
-    'inside_corner_trim': 'Corners',
-    'outside_corner_trim': 'Corners',
+    // 2. TRIMS
+    'trim': 'trims',
+    'corner': 'trims',
+    'corners': 'trims',
+    'outside_corner_trim': 'trims',
+    'inside_corner_trim': 'trims',
+    'starter_strip': 'trims',
+    'frieze_board': 'trims',
+    'j_channel': 'trims',
+    'window_trim': 'trims',
+    'door_trim': 'trims',
+    'fascia': 'trims',
+    'belly_band': 'trims',
 
-    // Belly Band
-    'belly_band': 'Belly Band',
-    'belly_band_trim': 'Belly Band',
-    'belly_band_flashing': 'Belly Band',
-    'belly_band_fastener': 'Belly Band',
-    'belly_band_caulk': 'Belly Band',
+    // 3. METALS / FLASHINGS
+    'flashing': 'metals_flashings',
+    'z_flashing': 'metals_flashings',
+    'drip_edge': 'metals_flashings',
+    'head_flashing': 'metals_flashings',
+    'kickout_flashing': 'metals_flashings',
 
-    // Gable Topout
-    'gable_topout': 'Trim',
-    'gable_topout_trim': 'Trim',
-    'gable_topout_flashing': 'Trim',
+    // 4. WATERPROOFING
+    'house_wrap': 'waterproofing',
+    'wrb': 'waterproofing',
+    'water_barrier': 'waterproofing',
+    'weatherproofing': 'waterproofing',
+    'flashing_tape': 'waterproofing',
+    'seam_tape': 'waterproofing',
 
-    // Topout
-    'topout': 'Trim',
-    'topout_trim': 'Trim',
-    'topout_flashing': 'Trim',
+    // 5. ACCESSORIES (everything else)
+    'fasteners': 'accessories',
+    'fastener': 'accessories',
+    'caulk': 'accessories',
+    'sealant': 'accessories',
+    'paint': 'accessories',
+    'accessory': 'accessories',
+    'architectural_details': 'accessories',
 
-    // Soffit & Fascia
-    'soffit': 'Soffit & Fascia',
-    'soffit_panel': 'Soffit & Fascia',
-    'soffit_trim': 'Soffit & Fascia',
-    'soffit_fastener': 'Soffit & Fascia',
-    'fascia': 'Soffit & Fascia',
-    'fascia_board': 'Soffit & Fascia',
-    'fascia_fastener': 'Soffit & Fascia',
+    // 6. SOFFIT
+    'soffit': 'soffit',
 
-    // Flashing & Weatherproofing
-    'flashing': 'Flashing & Weatherproofing',
-    'water_barrier': 'Flashing & Weatherproofing',
-    'house_wrap': 'Flashing & Weatherproofing',
-    'housewrap': 'Flashing & Weatherproofing',
-    'wrb': 'Flashing & Weatherproofing',
-    'weatherproofing': 'Flashing & Weatherproofing',
-    'penetration': 'Flashing & Weatherproofing',
-    'vent': 'Flashing & Weatherproofing',
-    'vents': 'Flashing & Weatherproofing',  // Plural category from pricing_items
-    'gable_vent': 'Flashing & Weatherproofing',
-    'light_fixture': 'Flashing & Weatherproofing',
-    'outlet': 'Flashing & Weatherproofing',
-    'hose_bib': 'Flashing & Weatherproofing',
-    'underlayment': 'Flashing & Weatherproofing',
-    'flashing_tape': 'Flashing & Weatherproofing',
-
-    // Fasteners & Accessories
-    'fasteners': 'Fasteners',
-    'fastener': 'Fasteners',
-    'accessories': 'Accessories',
-    'accessory': 'Accessories',
-
-    // Caulk & Sealants
-    'caulk': 'Caulk & Sealants',
-    'sealant': 'Caulk & Sealants',
-    'sealants': 'Caulk & Sealants',
-    'backer_rod': 'Caulk & Sealants',
-
-    // Architectural Details
-    'corbel': 'Architectural Details',
-    'bracket': 'Architectural Details',
-    'shutter': 'Architectural Details',
-    'post': 'Architectural Details',
-    'column': 'Architectural Details',
-    'architectural': 'Architectural Details',
-
-    // Gutters & Downspouts
-    'gutter': 'Gutters & Downspouts',
-    'gutter_hanger': 'Gutters & Downspouts',
-    'gutter_accessory': 'Gutters & Downspouts',
-    'downspout': 'Gutters & Downspouts',
-    'downspout_bracket': 'Gutters & Downspouts',
-
-    // Roofing Components
-    'eave': 'Roofing Components',
-    'rake': 'Roofing Components',
-    'ridge': 'Roofing Components',
-    'valley': 'Roofing Components',
-    'ice_water_shield': 'Roofing Components',
-
-    // Paint & Primer
-    'paint': 'Paint & Primer',
+    // 7. GUTTERS & DOWNSPOUTS
+    'gutter': 'gutters',
+    'downspout': 'gutters',
   };
 
-  return groupMap[category?.toLowerCase() || ''] || 'Other Materials';
+  return groupMappings[category?.toLowerCase() || ''] || 'accessories';
 }
 
 /**
@@ -3344,77 +3287,66 @@ function getPresentationGroup(category?: string): string {
  */
 function normalizePresentationGroup(group?: string): string {
   const normalizeMap: Record<string, string> = {
-    // Siding
-    'siding': 'Siding',
-    'siding & underlayment': 'Siding',
+    // 1. CLADDING
+    'siding': 'cladding',
+    'siding & underlayment': 'cladding',
+    'cladding': 'cladding',
 
-    // Trim & Corners
-    'trim': 'Trim',
-    'corners': 'Corners',
-    'corner': 'Corners',
-    'trim & corners': 'Trim',
+    // 2. TRIMS
+    'trim': 'trims',
+    'trims': 'trims',
+    'corners': 'trims',
+    'corner': 'trims',
+    'trim & corners': 'trims',
+    'belly band': 'trims',
+    'belly_band': 'trims',
+    'gable_topout': 'trims',
+    'gable topout': 'trims',
+    'topout': 'trims',
+    'fascia': 'trims',
 
-    // Belly Band
-    'belly band': 'Belly Band',
-    'belly_band': 'Belly Band',
+    // 3. METALS / FLASHINGS
+    'flashing': 'metals_flashings',
+    'metals_flashings': 'metals_flashings',
+    'metals / flashings': 'metals_flashings',
+    'flashing & weatherproofing': 'metals_flashings',
+    'penetrations': 'metals_flashings',
 
-    // Gable Topout
-    'gable_topout': 'Trim',
-    'gable topout': 'Trim',
+    // 4. WATERPROOFING
+    'waterproofing': 'waterproofing',
+    'house wrap & accessories': 'waterproofing',
+    'house wrap': 'waterproofing',
+    'housewrap': 'waterproofing',
+    'water_barrier': 'waterproofing',
+    'wrb': 'waterproofing',
 
-    // Topout
-    'topout': 'Trim',
+    // 5. ACCESSORIES
+    'accessories': 'accessories',
+    'fasteners': 'accessories',
+    'fasteners & accessories': 'accessories',
+    'caulk & sealants': 'accessories',
+    'caulk': 'accessories',
+    'sealants': 'accessories',
+    'architectural': 'accessories',
+    'architectural details': 'accessories',
+    'paint & primer': 'accessories',
+    'paint': 'accessories',
+    'other materials': 'accessories',
+    'other': 'accessories',
 
-    // Soffit & Fascia
-    'soffit': 'Soffit & Fascia',
-    'fascia': 'Soffit & Fascia',
-    'soffit & fascia': 'Soffit & Fascia',
+    // 6. SOFFIT
+    'soffit': 'soffit',
+    'soffit & fascia': 'soffit',
 
-    // Flashing & Weatherproofing
-    'flashing': 'Flashing & Weatherproofing',
-    'flashing & weatherproofing': 'Flashing & Weatherproofing',
-    'house wrap & accessories': 'Flashing & Weatherproofing',
-    'house wrap': 'Flashing & Weatherproofing',
-    'housewrap': 'Flashing & Weatherproofing',
-    'water_barrier': 'Flashing & Weatherproofing',
-    'wrb': 'Flashing & Weatherproofing',
-    'weatherproofing': 'Flashing & Weatherproofing',
-    'penetrations': 'Flashing & Weatherproofing',
-
-    // Fasteners & Accessories
-    'fasteners': 'Fasteners',
-    'fasteners & accessories': 'Fasteners',
-    'accessories': 'Accessories',
-
-    // Caulk & Sealants
-    'caulk & sealants': 'Caulk & Sealants',
-    'caulk': 'Caulk & Sealants',
-    'sealants': 'Caulk & Sealants',
-
-    // Architectural Details
-    'architectural': 'Architectural Details',
-    'architectural details': 'Architectural Details',
-
-    // Gutters & Downspouts
-    'gutter': 'Gutters & Downspouts',
-    'gutters': 'Gutters & Downspouts',
-    'gutters & downspouts': 'Gutters & Downspouts',
-
-    // Roofing Components
-    'roofing': 'Roofing Components',
-    'roofing components': 'Roofing Components',
-
-    // Paint & Primer
-    'paint & primer': 'Paint & Primer',
-    'paint': 'Paint & Primer',
-
-    // Other
-    'other materials': 'Other Materials',
-    'other': 'Other Materials',
+    // 7. GUTTERS
+    'gutter': 'gutters',
+    'gutters': 'gutters',
+    'gutters & downspouts': 'gutters',
+    'downspout': 'gutters',
   };
 
   const lowered = group?.toLowerCase() || '';
-  return normalizeMap[lowered] || group || 'Other Materials';
+  return normalizeMap[lowered] || group || 'accessories';
 }
 
 /**
