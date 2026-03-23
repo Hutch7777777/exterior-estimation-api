@@ -3231,6 +3231,9 @@ function getPresentationGroup(category?: string): string {
     'shingle_siding': 'cladding',
     'panel_siding': 'cladding',
     'vertical_siding': 'cladding',
+    'board_batten': 'cladding',
+    'board_and_batten': 'cladding',
+    'batten': 'cladding',
 
     // 2. TRIMS
     'trim': 'trims',
