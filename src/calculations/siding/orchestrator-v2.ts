@@ -17,7 +17,8 @@ import {
 } from './autoscope-v2';
 import { AutoScopeLineItem, MaterialCategoryAreas } from '../../types/autoscope';
 import { getSupabaseClient, getSupabaseServiceClient, isDatabaseConfigured } from '../../services/database';
-import { getCalculationConstants, getProjectEstimateSettings, ProjectEstimateSettings } from '../../services/configService';
+import { getCalculationConstants, getProjectEstimateSettings, CalculationConstants, ProjectEstimateSettings } from '../../services/configService';
+import { FACADE_SQFT_KEYS, NET_SIDING_SQFT_KEYS, resolveAliasedNumber } from './measurementAliases';
 import { loadDetectionCountPricing, DetectionCountPricing, lastFetchResult } from '../../services/detectionCountPricing';
 
 // ============================================================================
@@ -242,6 +243,41 @@ export interface V2CalculationResult {
 // INSTALLATION LABOR CALCULATION
 // ============================================================================
 
+// Maps installation labor_class / rate_name → calculation_constants key.
+// labor_rates is the AUTHORITATIVE source for installation rates (granular,
+// purpose-built table — same specific → org → base resolution pattern as
+// builder pricing). The labor_rate_* rows in calculation_constants serve ONLY
+// as a logged fallback when the labor_rates row is missing or unusable, so a
+// missing row degrades to a default rate instead of silently dropping the
+// labor line.
+const INSTALL_RATE_CONSTANT_KEYS: Record<string, string> = {
+  'lap siding installation': 'labor_rate_lap_siding',
+  'shingle siding installation': 'labor_rate_shingle_siding',
+  'panel siding installation': 'labor_rate_panel_siding',
+  'board & batten installation': 'labor_rate_board_batten',
+  'board and batten installation': 'labor_rate_board_batten',
+};
+
+function resolveInstallLaborRate(
+  rateName: string,
+  laborRatesTableValue: number,
+  constants: CalculationConstants | null
+): { unitCost: number; source: 'labor_rates' | 'calculation_constants' } {
+  if (laborRatesTableValue > 0) {
+    return { unitCost: laborRatesTableValue, source: 'labor_rates' };
+  }
+
+  const constantKey = INSTALL_RATE_CONSTANT_KEYS[rateName.toLowerCase().trim()];
+  const constantValue = constantKey && constants ? Number(constants[constantKey]) : NaN;
+
+  if (constantKey && Number.isFinite(constantValue) && constantValue > 0) {
+    console.warn(`⚠️ [labor] ${rateName}: no usable labor_rates row — falling back to calculation_constants.${constantKey} ($${constantValue}/SQ)`);
+    return { unitCost: constantValue, source: 'calculation_constants' };
+  }
+
+  return { unitCost: 0, source: 'labor_rates' };
+}
+
 /**
  * Calculate installation labor using labor_auto_scope_rules
  * Groups materials by labor_class for separate labor line items per siding type.
@@ -258,7 +294,8 @@ function calculateInstallationLaborFromRules(
   laborAutoScopeRules: LaborAutoScopeRule[],
   detectionCounts: Record<string, { count: number; total_lf?: number; total_sf?: number }> | undefined,
   facadeAreaSqft: number,
-  laborRates: LaborRate[] = []
+  laborRates: LaborRate[] = [],
+  constants: CalculationConstants | null = null
 ): { laborItems: LaborLineItem[], subtotal: number } {
 
   console.log('');
@@ -348,22 +385,27 @@ function calculateInstallationLaborFromRules(
       r.rate_name.toLowerCase() === laborClassName.toLowerCase()
     );
 
-    if (matchingRate) {
-      const unitCost = parseFloat(matchingRate.base_rate) || 0;
-      const multiplier = parseFloat(matchingRate.difficulty_multiplier) || 1.0;
-      const minCharge = parseFloat(matchingRate.min_charge || '0');
+    // labor_rates is authoritative; when the row is missing/unusable the rate
+    // falls back to calculation_constants (logged in resolver) instead of
+    // silently dropping the labor line.
+    const tableRate = matchingRate ? parseFloat(matchingRate.base_rate) || 0 : 0;
+    const { unitCost, source: rateSource } = resolveInstallLaborRate(laborClassName, tableRate, constants);
+
+    if (unitCost > 0) {
+      const multiplier = matchingRate ? parseFloat(matchingRate.difficulty_multiplier) || 1.0 : 1.0;
+      const minCharge = matchingRate ? parseFloat(matchingRate.min_charge || '0') : 0;
 
       const baseCost = data.squares * unitCost * multiplier;
       const totalCost = Math.max(baseCost, minCharge);
 
-      console.log(`   ✅ ${laborClassName}: ${data.squares.toFixed(2)} SQ × $${unitCost}/SQ = $${totalCost.toFixed(2)}`);
+      console.log(`   ✅ ${laborClassName}: ${data.squares.toFixed(2)} SQ × $${unitCost}/SQ = $${totalCost.toFixed(2)} [rate source: ${rateSource}]`);
 
       laborItems.push({
-        rate_id: matchingRate.id,
-        rate_name: matchingRate.rate_name,
-        description: matchingRate.description,
+        rate_id: matchingRate?.id ?? `calculation_constants:${laborClassName}`,
+        rate_name: matchingRate?.rate_name ?? laborClassName,
+        description: matchingRate?.description ?? laborClassName,
         quantity: Math.round(data.squares * 100) / 100,
-        unit: matchingRate.unit || 'SQ',
+        unit: matchingRate?.unit || 'SQ',
         unit_cost: unitCost,
         total_cost: Math.round(totalCost * 100) / 100,
         notes: `${(data.sqft || data.squares * 100).toFixed(0)} SF ÷ 100 = ${data.squares.toFixed(2)} SQ @ $${unitCost.toFixed(2)}/SQ`
@@ -405,7 +447,7 @@ function calculateInstallationLaborFromRules(
         }
       }
     } else {
-      console.log(`   ⚠️ No labor rate found for labor_class: ${laborClassName}`);
+      console.log(`   ⚠️ No labor rate for labor_class: ${laborClassName} (no calculation_constants mapping and no labor_rates row)`);
     }
   }
 
@@ -527,7 +569,8 @@ function calculateInstallationLaborFromRules(
     console.log(`      Final: shouldApply=${shouldApply}, quantity=${quantity}`);
 
     if (shouldApply && quantity > 0) {
-      const unitCost = parseFloat(rate.base_rate) || 0;
+      // labor_rates joined rate is authoritative; calculation_constants is the logged fallback
+      const { unitCost } = resolveInstallLaborRate(rate.rate_name, parseFloat(rate.base_rate) || 0, constants);
       const multiplier = parseFloat(rate.difficulty_multiplier) || 1.0;
       const minCharge = parseFloat(rate.min_charge || '0');
 
@@ -576,7 +619,8 @@ function calculateInstallationLaborFromRules(
 function calculateInstallationLaborLegacy(
   materials: CombinedLineItem[],
   laborRates: LaborRate[],
-  productCategory: string = 'lap_siding'
+  productCategory: string = 'lap_siding',
+  constants: CalculationConstants | null = null
 ): { laborItems: LaborLineItem[], subtotal: number } {
 
   console.log('👷 Calculating installation labor (legacy method)...');
@@ -611,28 +655,31 @@ function calculateInstallationLaborLegacy(
 
   const installRate = laborRates.find(r => r.rate_name === targetRateName);
 
-  if (installRate) {
-    const unitCost = parseFloat(installRate.base_rate) || 0;
-    const multiplier = parseFloat(installRate.difficulty_multiplier) || 1.0;
-    const minCharge = parseFloat(installRate.min_charge || '0');
+  // labor_rates is authoritative; calculation_constants is the logged fallback
+  const tableRate = installRate ? parseFloat(installRate.base_rate) || 0 : 0;
+  const { unitCost, source: rateSource } = resolveInstallLaborRate(targetRateName, tableRate, constants);
+
+  if (unitCost > 0) {
+    const multiplier = installRate ? parseFloat(installRate.difficulty_multiplier) || 1.0 : 1.0;
+    const minCharge = installRate ? parseFloat(installRate.min_charge || '0') : 0;
 
     const baseCost = totalSquares * unitCost * multiplier;
     const totalCost = Math.max(baseCost, minCharge);
 
-    console.log(`   💵 ${targetRateName}: ${totalSquares.toFixed(2)} SQ × $${unitCost}/SQ = $${totalCost.toFixed(2)}`);
+    console.log(`   💵 ${targetRateName}: ${totalSquares.toFixed(2)} SQ × $${unitCost}/SQ = $${totalCost.toFixed(2)} [rate source: ${rateSource}]`);
 
     laborItems.push({
-      rate_id: installRate.id,
-      rate_name: installRate.rate_name,
-      description: installRate.description,
+      rate_id: installRate?.id ?? `calculation_constants:${targetRateName}`,
+      rate_name: installRate?.rate_name ?? targetRateName,
+      description: installRate?.description ?? targetRateName,
       quantity: Math.round(totalSquares * 100) / 100,
-      unit: installRate.unit,
+      unit: installRate?.unit || 'SQ',
       unit_cost: unitCost,
       total_cost: Math.round(totalCost * 100) / 100,
-      notes: installRate.notes
+      notes: installRate?.notes ?? ''
     });
   } else {
-    console.log(`   ⚠️ Labor rate not found: ${targetRateName}`);
+    console.log(`   ⚠️ No labor rate for: ${targetRateName} (no calculation_constants mapping and no labor_rates row)`);
   }
 
   const subtotal = laborItems.reduce((sum, item) => sum + item.total_cost, 0);
@@ -1157,6 +1204,7 @@ export async function calculateWithAutoScopeV2(
   }
 
   // V9.1: Override insurance rate with org-specific value if available
+  // (specific → org → base resolution, same pattern as builder pricing)
   const EFFECTIVE_INSURANCE_RATE = orgOverheadConfig?.insurance_rate_per_thousand ?? CALC_INSURANCE_RATE_PER_THOUSAND;
   if (orgOverheadConfig?.insurance_rate_per_thousand) {
     console.log(`📊 Using org-specific insurance rate: $${EFFECTIVE_INSURANCE_RATE}/$1K (was $${CALC_INSURANCE_RATE_PER_THOUSAND}/$1K)`);
@@ -1348,8 +1396,9 @@ export async function calculateWithAutoScopeV2(
         const perMatData = perMaterialMeasurements?.[assignment.pricing_item_id];
 
         // V8.4: Calculate openings from facade_area - net_siding (reliable data from Transform CAD node)
-        const facadeArea = Number(wm?.facade_area_sqft) || Number(wm?.facade_sqft) || Number(wm?.facade_total_sqft) || 0;
-        const netSiding = Number(wm?.net_siding_sqft) || Number(wm?.net_wall_area_sqft) || 0;
+        // Canonical alias order shared with buildMeasurementContext (measurementAliases.ts)
+        const facadeArea = resolveAliasedNumber(FACADE_SQFT_KEYS, [wm]);
+        const netSiding = resolveAliasedNumber(NET_SIDING_SQFT_KEYS, [wm]);
 
         // Openings = gross facade - net siding
         const globalOpenings = (facadeArea > 0 && netSiding > 0)
@@ -2673,13 +2722,12 @@ export async function calculateWithAutoScopeV2(
   // Cast to any to check all possible property names since types may not be complete
   const wmLabor = webhookMeasurements as any;
 
-  const facadeAreaSqft = wmLabor?.facade_area_sqft ||      // MeasurementContext uses this
-    wmLabor?.facade_sqft ||                                 // WebhookMeasurements type has this
-    wmLabor?.facade_total_sqft ||                           // Database column name
-    wmLabor?.gross_wall_area_sqft ||                        // Alternative name
-    wmLabor?.net_siding_area_sqft ||                        // Fallback only if gross not available
-    wmLabor?.net_siding_sqft ||                             // Another variation
-    0;
+  // Canonical alias order (measurementAliases.ts); net-siding keys remain the
+  // last-resort fallback when no gross facade field is present
+  const facadeAreaSqft = resolveAliasedNumber(
+    [...FACADE_SQFT_KEYS, ...NET_SIDING_SQFT_KEYS],
+    [wmLabor]
+  );
 
   // Calculate installation labor using auto-scope rules (or legacy method if no rules)
   let laborItems: LaborLineItem[];
@@ -2699,7 +2747,8 @@ export async function calculateWithAutoScopeV2(
       laborAutoScopeRules,
       detectionCounts,
       facadeAreaSqft,
-      laborRates  // Pass laborRates for labor_class-based grouping
+      laborRates,  // Pass laborRates for labor_class-based grouping
+      dbConstants  // fallback install rates when a labor_rates row is missing
     );
     laborItems = laborResult.laborItems;
     laborSubtotal = laborResult.subtotal;
@@ -2708,7 +2757,8 @@ export async function calculateWithAutoScopeV2(
     const laborResult = calculateInstallationLaborLegacy(
       lineItems,
       laborRates,
-      'lap_siding'
+      'lap_siding',
+      dbConstants  // fallback install rates when a labor_rates row is missing
     );
     laborItems = laborResult.laborItems;
     laborSubtotal = laborResult.subtotal;

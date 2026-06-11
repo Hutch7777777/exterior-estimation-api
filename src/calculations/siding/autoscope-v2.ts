@@ -25,6 +25,7 @@ import {
   EstimateSettings,
 } from '../../types/autoscope';
 import { PerMaterialMeasurements } from '../../types/webhook';
+import { FACADE_SQFT_KEYS, NET_SIDING_SQFT_KEYS, resolveAliasedNumber } from './measurementAliases';
 // PricingItem type used indirectly via getPricingByIds return type
 
 // ============================================================================
@@ -419,9 +420,10 @@ export function buildMeasurementContext(
   // =========================================================================
 
   // Primary areas - DB uses facade_total_sqft, webhook sends facade_area_sqft
-  // Priority: facade_area_sqft (webhook) > facade_total_sqft (DB) > facade_sqft > gross_wall_area_sqft
-  const facade_sqft = get(['facade_area_sqft', 'facade_total_sqft', 'facade_sqft', 'gross_wall_area_sqft']);
-  const net_siding_sqft = get(['net_siding_sqft', 'net_siding_area_sqft', 'net_wall_area_sqft']);
+  // Canonical alias order shared with orchestrator-v2 labor calcs (measurementAliases.ts).
+  // For each key, DB wins over webhook — same as the get() helper used below.
+  const facade_sqft = resolveAliasedNumber(FACADE_SQFT_KEYS, [db, wh]);
+  const net_siding_sqft = resolveAliasedNumber(NET_SIDING_SQFT_KEYS, [db, wh]);
 
   // 🎯 DEBUG: Log facade source to trace any doubling issues
   console.log('🎯 FACADE_SOURCE:', {
