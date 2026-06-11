@@ -259,9 +259,9 @@ describe('Pricing Integration', () => {
       expect(totals.labor_subtotal).toBe(2051.10);
       expect(totals.overhead).toBe(205.11); // 10% of labor
       expect(totals.subtotal).toBe(3256.21); // 1000 + 2051.10 + 205.11
-      expect(totals.markup_rate).toBe(0.15);
-      expect(totals.markup_amount).toBe(488.43); // 3256.21 × 0.15
-      expect(totals.total).toBe(3744.64); // 3256.21 + 488.43
+      expect(totals.markup_rate).toBe(0.10); // default aligned to 10% in 56d4cd2
+      expect(totals.markup_amount).toBe(325.62); // 3256.21 × 0.10
+      expect(totals.total).toBe(3581.83); // 3256.21 + 325.62
     });
 
     it('should calculate totals with custom markup rate', () => {
