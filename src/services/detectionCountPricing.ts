@@ -27,11 +27,15 @@ async function serviceRoleFetch<T>(
   path: string
 ): Promise<{ data: T[] | null; error: string | null }> {
   const url = process.env.SUPABASE_URL || '';
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
-  console.log(`[serviceRoleFetch] key=${key ? key.slice(0,20) + '...' : 'MISSING'} url=${url ? 'ok' : 'MISSING'}`);
-
-  if (!url || !key) return { data: null, error: 'Missing SUPABASE_URL or key' };
+  if (!key) {
+    throw new Error(
+      'Missing SUPABASE_SERVICE_ROLE_KEY in environment variables — ' +
+      'serviceRoleFetch() requires the service role key and does not fall back to the anon key'
+    );
+  }
+  if (!url) return { data: null, error: 'Missing SUPABASE_URL' };
 
   try {
     const fullUrl = `${url.replace(/\/$/, '')}/rest/v1/${path}`;

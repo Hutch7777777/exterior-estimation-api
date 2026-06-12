@@ -2147,7 +2147,13 @@ export async function calculateWithAutoScopeV2(
     if (!corbelPricing) {
       try {
         const sbUrl = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
-        const sbKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
+        const sbKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        if (!sbKey) {
+          throw new Error(
+            'Missing SUPABASE_SERVICE_ROLE_KEY in environment variables — ' +
+            'corbel inline pricing fetch requires the service role key and does not fall back to the anon key'
+          );
+        }
         const res = await fetch(
           `${sbUrl}/rest/v1/detection_class_material_mapping?select=default_product_sku&class_name=eq.corbel&active=eq.true&limit=1`,
           { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } }
