@@ -28,26 +28,24 @@ export function getSupabaseClient(): SupabaseClient {
 
 /**
  * Get Supabase client with service role key (bypasses RLS)
- * Falls back to anon key client if service role key not configured
+ * Throws if SUPABASE_SERVICE_ROLE_KEY is not configured — no anon fallback,
+ * so RLS-bypassing code paths fail loudly instead of silently running as anon
  */
 export function getSupabaseServiceClient(): SupabaseClient {
   if (!supabaseServiceClient) {
     if (!SUPABASE_URL) {
       throw new Error('Missing SUPABASE_URL in environment variables');
     }
-    // Use service role key if available, otherwise fall back to anon key
-    const key = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
-    if (!key) {
-      throw new Error('Missing Supabase key in environment variables');
+    if (!SUPABASE_SERVICE_ROLE_KEY) {
+      throw new Error(
+        'Missing SUPABASE_SERVICE_ROLE_KEY in environment variables — ' +
+        'getSupabaseServiceClient() requires the service role key and does not fall back to the anon key'
+      );
     }
-    supabaseServiceClient = createClient(SUPABASE_URL, key, {
+    supabaseServiceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false }
     });
-    if (SUPABASE_SERVICE_ROLE_KEY) {
-      console.log('✅ Supabase service role client initialized (bypasses RLS)');
-    } else {
-      console.log('⚠️ Supabase service role key not configured, using anon key');
-    }
+    console.log('✅ Supabase service role client initialized (bypasses RLS)');
   }
   return supabaseServiceClient;
 }

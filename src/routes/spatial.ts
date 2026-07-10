@@ -40,7 +40,7 @@ router.post('/webhook/spatial-containment', async (req: Request, res: Response) 
 
     return res.status(500).json({
       success: false,
-      error: error.message,
+      error: 'Spatial containment failed',
       elapsed_ms: elapsed,
     });
   }

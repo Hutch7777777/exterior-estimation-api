@@ -3,7 +3,7 @@
  * Uses database-driven auto-scope rules for complete takeoff generation
  */
 
-import { MaterialAssignment, WebhookMeasurements, PerMaterialMeasurements } from '../../types/webhook';
+import { MaterialAssignment, WebhookMeasurements, PerMaterialMeasurements, CalculationWarning } from '../../types/webhook';
 import {
   getPricingByIds,
   PricingItem
@@ -20,6 +20,11 @@ import { getSupabaseClient, getSupabaseServiceClient, isDatabaseConfigured } fro
 import { getCalculationConstants, getProjectEstimateSettings, CalculationConstants, ProjectEstimateSettings } from '../../services/configService';
 import { FACADE_SQFT_KEYS, NET_SIDING_SQFT_KEYS, resolveAliasedNumber } from './measurementAliases';
 import { loadDetectionCountPricing, DetectionCountPricing, lastFetchResult } from '../../services/detectionCountPricing';
+import {
+  resolveDetectionWasteMultiplier,
+  resolveMaterialWasteMultiplier,
+  resolveWasteFactor,
+} from './waste';
 
 // ============================================================================
 // BOOLEAN HELPERS - Handle JSON string "true"/"false" from Supabase
@@ -232,10 +237,12 @@ export interface V2CalculationResult {
     measurement_source: 'database' | 'webhook' | 'fallback';
     rules_evaluated: number;
     rules_triggered: number;
+    /** Human-readable skip reason per evaluated-but-not-triggered auto-scope rule */
+    rules_skipped: string[];
     markup_rate: number;
     crew_size: number;
     estimated_weeks: number;
-    warnings: Array<{ code: string; message: string }>;
+    warnings: CalculationWarning[];
   };
 }
 
@@ -1044,7 +1051,7 @@ export async function calculateWithAutoScopeV2(
     }
   }
 
-  const warnings: Array<{ code: string; message: string }> = [];
+  const warnings: CalculationWarning[] = [];
   const lineItems: CombinedLineItem[] = [];
   const missingItems: string[] = [];
 
@@ -1145,6 +1152,7 @@ export async function calculateWithAutoScopeV2(
   // dumpster, toilet, mobilization, etc.
   // =========================================================================
   let orgOverheadConfig: OrgOverheadConfig | null = null;
+  let orgDefaultWastePercent: unknown = null;
 
   if (organizationId && isDatabaseConfigured()) {
     // Use service role client to bypass RLS (API isn't authenticated as a user)
@@ -1172,7 +1180,20 @@ export async function calculateWithAutoScopeV2(
     } else {
       console.log('📊 Org overhead config: NOT FOUND (using defaults)');
     }
+
+    orgDefaultWastePercent = orgData?.settings?.labor_rates?.default_waste_factor_percent;
   }
+
+  // Resolve this once so every calculation path sees the same project/org
+  // setting. The 10% fallback preserves current behavior when neither exists.
+  const resolvedWaste = resolveWasteFactor(
+    config?.estimate_settings?.waste_factor_percent,
+    orgDefaultWastePercent,
+  );
+  console.log(
+    `📐 Resolved waste factor: ${resolvedWaste.percent}% ` +
+    `(×${resolvedWaste.multiplier.toFixed(4)}, source=${resolvedWaste.source})`,
+  );
 
   // =========================================================================
   // Phase 2B: Apply estimate_settings.overhead overrides
@@ -1347,20 +1368,21 @@ export async function calculateWithAutoScopeV2(
       const effectiveAssignment = { ...assignment, quantity: effectiveQuantity };
 
       // Calculate quantity based on unit conversion
-      const quantity = calculateMaterialQuantity(effectiveAssignment, pricing);
+      const quantity = calculateMaterialQuantity(
+        effectiveAssignment,
+        pricing,
+        resolvedWaste.multiplier,
+      );
       const materialCost = quantity * Number(pricing.material_cost || 0);
       const materialExtended = Math.round(materialCost * 100) / 100;
 
       // Build descriptive notes based on the calculation type
-      // Use same category-aware waste/coverage as calculateMaterialQuantity()
+      // Use the same centralized resolution as calculateMaterialQuantity().
       const category = pricing.category?.toLowerCase() || '';
-      const categoryWasteDefaults: Record<string, number> = {
-        'lap_siding': 1.10, 'siding': 1.10,
-        'panel': 1.10, 'board_batten': 1.10, 'panel_siding': 1.10,
-        'shingle': 1.15, 'shingle_siding': 1.15, 'shake': 1.15,
-        'trim': 1.10, 'corners': 1.12, 'flashing': 1.10
-      };
-      const wasteMultiplier = pricing.waste_factor || categoryWasteDefaults[category] || 1.10;
+      const wasteMultiplier = resolveMaterialWasteMultiplier(
+        pricing,
+        resolvedWaste.multiplier,
+      );
       const pricingUnit = pricing.unit?.toLowerCase() || '';
 
       if (!notes) {  // Only set if not already set by trim fallback
@@ -1658,8 +1680,31 @@ export async function calculateWithAutoScopeV2(
       wrbProduct,
       // Phase 2B: Pass estimate settings for section toggles and manual LF overrides
       estimateSettings,
+      // Exposed as `waste_factor` to database quantity formulas.
+      wasteFactor: resolvedWaste.multiplier,
     }
   );
+
+  // =========================================================================
+  // SURFACE AUTO-SCOPE FORMULA ERRORS AS WARNINGS
+  // Rules skipped due to quantity_formula evaluation errors are anomalies
+  // (bad formula in siding_auto_scope_rules) — surface them in the response
+  // so n8n can see them. Benign skips (trigger not met, quantity=0, no
+  // matching manufacturer) are reported via metadata.rules_skipped instead.
+  // Additive observability only — no effect on calculations.
+  // =========================================================================
+  for (const skipped of autoScopeResult.rules_skipped_details) {
+    if (skipped.formula_error) {
+      const mfrSuffix = skipped.manufacturer ? ` [${skipped.manufacturer}]` : '';
+      warnings.push({
+        code: 'AUTO_SCOPE_RULE_SKIPPED',
+        message: `Auto-scope rule ${skipped.rule_id} (${skipped.rule_name})${mfrSuffix} skipped: ${skipped.reason}`,
+        rule_id: skipped.rule_id,
+        rule_name: skipped.rule_name,
+        reason: skipped.reason,
+      });
+    }
+  }
 
   // =========================================================================
   // CONSOLIDATE ASSIGNED MATERIALS BEFORE ADDING AUTO-SCOPE
@@ -2147,7 +2192,13 @@ export async function calculateWithAutoScopeV2(
     if (!corbelPricing) {
       try {
         const sbUrl = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
-        const sbKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
+        const sbKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        if (!sbKey) {
+          throw new Error(
+            'Missing SUPABASE_SERVICE_ROLE_KEY in environment variables — ' +
+            'corbel inline pricing fetch requires the service role key and does not fall back to the anon key'
+          );
+        }
         const res = await fetch(
           `${sbUrl}/rest/v1/detection_class_material_mapping?select=default_product_sku&class_name=eq.corbel&active=eq.true&limit=1`,
           { headers: { apikey: sbKey, Authorization: `Bearer ${sbKey}` } }
@@ -2639,18 +2690,24 @@ export async function calculateWithAutoScopeV2(
         let quantity = 0;
         let rawValue = 0;
 
+        const detectionWasteMultiplier = resolveDetectionWasteMultiplier(
+          mapping.waste_factor,
+          resolvedWaste.multiplier,
+          mapping.measurement_type,
+        );
+
         switch (mapping.measurement_type) {
           case 'count':
             rawValue = count;
-            quantity = Math.ceil(count * (mapping.waste_factor || 1));
+            quantity = Math.ceil(count * detectionWasteMultiplier);
             break;
           case 'linear':
             rawValue = totalLf;
-            quantity = Math.ceil(totalLf * (mapping.waste_factor || 1.12));
+            quantity = Math.ceil(totalLf * detectionWasteMultiplier);
             break;
           case 'area':
             rawValue = totalSf;
-            quantity = Math.ceil(totalSf * (mapping.waste_factor || 1.12));
+            quantity = Math.ceil(totalSf * detectionWasteMultiplier);
             break;
         }
 
@@ -2679,7 +2736,7 @@ export async function calculateWithAutoScopeV2(
           labor_extended: 0,
           total_extended: 0,
           calculation_source: 'auto-scope',  // Uses auto-scope type for consistency
-          notes: `${notePrefix}Dynamic detection: ${className} (${rawValue.toFixed(1)} ${mapping.measurement_type === 'linear' ? 'LF' : mapping.measurement_type === 'area' ? 'SF' : 'count'} × ${mapping.waste_factor || 1} waste)`,
+          notes: `${notePrefix}Dynamic detection: ${className} (${rawValue.toFixed(1)} ${mapping.measurement_type === 'linear' ? 'LF' : mapping.measurement_type === 'area' ? 'SF' : 'count'} × ${detectionWasteMultiplier} waste)`,
         });
 
         dynamicProcessed.push(className);
@@ -2911,10 +2968,19 @@ export async function calculateWithAutoScopeV2(
   const autoScopeCount = lineItems.filter(i => i.calculation_source === 'auto-scope').length;
 
   // =========================================================================
-  // RECONCILIATION: Log warnings for detection classes that didn't produce line items
-  // This is read-only logging for visibility into dropped classes
+  // RECONCILIATION: Warn on detection classes that didn't produce line items
+  // Findings are logged AND surfaced as structured response warnings.
+  // Read-only — no effect on calculations.
   // =========================================================================
-  reconcileDetectionOutput(detectionCounts, lineItems);
+  const unpricedDetectionClasses = reconcileDetectionOutput(detectionCounts, lineItems);
+  for (const finding of unpricedDetectionClasses) {
+    warnings.push({
+      code: 'DETECTION_CLASS_UNPRICED',
+      message: `Detection class '${finding.detection_class}' received (count: ${finding.detection_count}, lf: ${finding.total_lf.toFixed(1)}, sf: ${finding.total_sf.toFixed(1)}) but no line items were generated`,
+      detection_class: finding.detection_class,
+      detection_count: finding.detection_count,
+    });
+  }
 
   // =========================================================================
   // AUDIT: Write detection counts to extraction_job_totals
@@ -2972,6 +3038,7 @@ export async function calculateWithAutoScopeV2(
       measurement_source: autoScopeResult.measurement_source,
       rules_evaluated: autoScopeResult.rules_evaluated,
       rules_triggered: autoScopeResult.rules_triggered,
+      rules_skipped: autoScopeResult.rules_skipped,
       markup_rate: CALC_MARKUP_RATE,
       crew_size: CALC_CREW_SIZE,
       estimated_weeks: CALC_ESTIMATED_WEEKS,
@@ -2985,19 +3052,32 @@ export async function calculateWithAutoScopeV2(
 // ============================================================================
 
 /**
- * Reconcile detection input vs output - log warnings for dropped classes
+ * A detection class that had detections but produced no line items.
+ * Returned by reconcileDetectionOutput() so findings can be surfaced
+ * as response warnings in addition to Railway logs.
+ */
+interface DetectionReconciliationFinding {
+  detection_class: string;
+  detection_count: number;
+  total_lf: number;
+  total_sf: number;
+}
+
+/**
+ * Reconcile detection input vs output - report dropped classes
  *
  * This function compares the incoming detectionCounts (what frontend sent)
  * against the generated lineItems (what orchestrator produced). Any detection
  * class that has count/lf/sf > 0 but no corresponding line item is logged
- * as a warning for visibility in Railway logs.
+ * for visibility in Railway logs AND returned so the caller can surface it
+ * in the API response warnings.
  *
- * IMPORTANT: This is READ-ONLY logging - no side effects on calculation.
+ * IMPORTANT: This is READ-ONLY - no side effects on calculation.
  */
 function reconcileDetectionOutput(
   detectionCounts: Record<string, { count: number; total_lf?: number; total_sf?: number }> | undefined,
   lineItems: CombinedLineItem[]
-): void {
+): DetectionReconciliationFinding[] {
   console.log('');
   console.log('[RECONCILIATION] ════════════════════════════════════════════════════');
   console.log('[RECONCILIATION] Checking detection input vs line item output...');
@@ -3005,7 +3085,7 @@ function reconcileDetectionOutput(
   if (!detectionCounts || Object.keys(detectionCounts).length === 0) {
     console.log('[RECONCILIATION] No detection counts received - skipping reconciliation');
     console.log('[RECONCILIATION] ════════════════════════════════════════════════════');
-    return;
+    return [];
   }
 
   // Classes to skip - these are structural/facade classes, not material classes
@@ -3053,6 +3133,7 @@ function reconcileDetectionOutput(
 
   // Check each detection class
   const missingClasses: string[] = [];
+  const findings: DetectionReconciliationFinding[] = [];
   let totalClasses = 0;
   let matchedClasses = 0;
 
@@ -3084,6 +3165,12 @@ function reconcileDetectionOutput(
       console.log(`[RECONCILIATION] ✅ ${className}: count=${count}, lf=${totalLf.toFixed(1)}, sf=${totalSf.toFixed(1)} → line items generated`);
     } else {
       missingClasses.push(className);
+      findings.push({
+        detection_class: className,
+        detection_count: count,
+        total_lf: totalLf,
+        total_sf: totalSf,
+      });
       console.log(`[RECONCILIATION] ⚠️  WARNING: Class '${className}' received (count: ${count}, lf: ${totalLf.toFixed(1)}, sf: ${totalSf.toFixed(1)}) but NO LINE ITEMS were generated`);
     }
   }
@@ -3102,6 +3189,8 @@ function reconcileDetectionOutput(
 
   console.log('[RECONCILIATION] ════════════════════════════════════════════════════');
   console.log('');
+
+  return findings;
 }
 
 /**
@@ -3202,19 +3291,14 @@ function consolidateLineItems(lineItems: CombinedLineItem[]): CombinedLineItem[]
  */
 function calculateMaterialQuantity(
   assignment: MaterialAssignment,
-  pricing: PricingItem
+  pricing: PricingItem,
+  resolvedWasteMultiplier: number = 1.10,
 ): number {
   const category = pricing.category?.toLowerCase() || '';
-
-  // Use pricing_items.waste_factor if available, otherwise category-aware defaults
-  // Office takeoffs use ~5-10% waste for lap siding, higher for complex materials
-  const categoryWasteDefaults: Record<string, number> = {
-    'lap_siding': 1.10, 'siding': 1.10,
-    'panel': 1.10, 'board_batten': 1.10, 'panel_siding': 1.10,
-    'shingle': 1.15, 'shingle_siding': 1.15, 'shake': 1.15,
-    'trim': 1.10, 'corners': 1.12, 'flashing': 1.10
-  };
-  const wasteMultiplier = pricing.waste_factor || categoryWasteDefaults[category] || 1.10;
+  const wasteMultiplier = resolveMaterialWasteMultiplier(
+    pricing,
+    resolvedWasteMultiplier,
+  );
 
   const pricingUnit = pricing.unit?.toLowerCase() || '';
 

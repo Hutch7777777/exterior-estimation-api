@@ -239,6 +239,8 @@ export async function getPresentationGroupMap(
  * Stored in project_configurations.configuration_data
  */
 export interface ProjectEstimateSettings {
+  /** Per-project waste override as a percentage (for example, 12 = 12%). */
+  waste_factor_percent?: number;
   wrb?: {
     product?: string;        // "tyvek-homewrap", "henry-jumbotex", etc.
     layer_mode?: string;     // "auto", "single", "double"
