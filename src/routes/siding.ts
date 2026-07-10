@@ -43,7 +43,7 @@ router.post('/calculate', async (req: Request, res: Response) => {
     console.error('Calculation error:', error);
     res.status(500).json({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error occurred'
+      error: 'Calculation failed'
     });
   }
 });
@@ -83,7 +83,7 @@ router.post('/calculate-priced', async (req: Request, res: Response) => {
     console.error('Priced calculation error:', error);
     res.status(500).json({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error occurred'
+      error: 'Calculation failed'
     });
   }
 });

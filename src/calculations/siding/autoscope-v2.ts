@@ -2043,6 +2043,7 @@ export async function generateAutoScopeItemsV2(
     rules_evaluated: 0,
     rules_triggered: 0,
     rules_skipped: [],
+    rules_skipped_details: [],
     measurement_source: 'fallback',
   };
 
@@ -2091,6 +2092,12 @@ export async function generateAutoScopeItemsV2(
   }
 
   const totalContext = buildMeasurementContext(dbMeasurements, webhookMeasurements);
+
+  // The orchestrator resolves project > organization > default once per run.
+  // Adding it to MeasurementContext makes `waste_factor` available to every
+  // database quantity_formula evaluated below.
+  totalContext.waste_factor = options?.wasteFactor ?? 1.10;
+  console.log(`📐 [AutoScope] formula waste factor: ${totalContext.waste_factor}`);
 
   // =========================================================================
   // FALLBACK: Reconstruct facade_area_sqft from manufacturer groups if empty
@@ -2185,6 +2192,12 @@ export async function generateAutoScopeItemsV2(
     if (options?.skipSidingPanels && isSidingCategory) {
       console.log(`  ⏭️ Rule ${rule.rule_id}: ${rule.rule_name} → SKIPPED (user has siding assignments)`);
       result.rules_skipped.push(`${rule.material_sku}: skipped - user has siding assignments`);
+      result.rules_skipped_details.push({
+        rule_id: rule.rule_id,
+        rule_name: rule.rule_name,
+        material_sku: rule.material_sku,
+        reason: 'skipped - user has siding assignments',
+      });
       continue;
     }
 
@@ -2225,6 +2238,13 @@ export async function generateAutoScopeItemsV2(
         if (error) {
           console.warn(`⚠️ Rule ${rule.rule_id} (${rule.rule_name}): Formula error - ${error}`);
           result.rules_skipped.push(`${rule.material_sku}: formula error - ${error}`);
+          result.rules_skipped_details.push({
+            rule_id: rule.rule_id,
+            rule_name: rule.rule_name,
+            material_sku: rule.material_sku,
+            reason: `formula error - ${error}`,
+            formula_error: true,
+          });
           continue;
         }
 
@@ -2234,10 +2254,22 @@ export async function generateAutoScopeItemsV2(
           // Verbose per-rule logging removed to reduce log volume
         } else {
           result.rules_skipped.push(`${rule.material_sku}: quantity=0`);
+          result.rules_skipped_details.push({
+            rule_id: rule.rule_id,
+            rule_name: rule.rule_name,
+            material_sku: rule.material_sku,
+            reason: 'quantity=0',
+          });
           console.log(`  ○ Rule ${rule.rule_id}: ${rule.rule_name} → 0 (formula returned 0)`);
         }
       } else {
         result.rules_skipped.push(`${rule.material_sku}: ${reason}`);
+        result.rules_skipped_details.push({
+          rule_id: rule.rule_id,
+          rule_name: rule.rule_name,
+          material_sku: rule.material_sku,
+          reason,
+        });
         // Special logging for config_toggle suppression
         if (reason.includes('config_toggle')) {
           console.log(`🔕 Rule ${rule.rule_id}: ${rule.rule_name} — SUPPRESSED by toggle: ${rule.trigger_condition?.config_toggle}`);
@@ -2258,6 +2290,12 @@ export async function generateAutoScopeItemsV2(
       if (matchingManufacturers.length === 0) {
         // No matching manufacturers in the project
         result.rules_skipped.push(`${rule.material_sku}: no matching manufacturer groups`);
+        result.rules_skipped_details.push({
+          rule_id: rule.rule_id,
+          rule_name: rule.rule_name,
+          material_sku: rule.material_sku,
+          reason: 'no matching manufacturer groups',
+        });
         console.log(`  ✗ Rule ${rule.rule_id}: ${rule.rule_name} → skipped (no matching manufacturers: ${rule.manufacturer_filter!.join(', ')})`);
         continue;
       }
@@ -2300,6 +2338,14 @@ export async function generateAutoScopeItemsV2(
           if (error) {
             console.warn(`⚠️ Rule ${rule.rule_id} (${rule.rule_name}) [${mfrName}]: Formula error - ${error}`);
             result.rules_skipped.push(`${rule.material_sku} [${mfrName}]: formula error - ${error}`);
+            result.rules_skipped_details.push({
+              rule_id: rule.rule_id,
+              rule_name: rule.rule_name,
+              material_sku: rule.material_sku,
+              reason: `formula error - ${error}`,
+              manufacturer: mfrName,
+              formula_error: true,
+            });
             continue;
           }
 
@@ -2309,10 +2355,24 @@ export async function generateAutoScopeItemsV2(
             console.log(`  ✓ Rule ${rule.rule_id}: ${rule.rule_name} [${mfrName}: ${mfrData.area_sqft.toFixed(0)} SF] → ${Math.ceil(quantity)} ${rule.unit} (${reason})`);
           } else {
             result.rules_skipped.push(`${rule.material_sku} [${mfrName}]: quantity=0`);
+            result.rules_skipped_details.push({
+              rule_id: rule.rule_id,
+              rule_name: rule.rule_name,
+              material_sku: rule.material_sku,
+              reason: 'quantity=0',
+              manufacturer: mfrName,
+            });
             console.log(`  ○ Rule ${rule.rule_id}: ${rule.rule_name} [${mfrName}] → 0 (formula returned 0)`);
           }
         } else {
           result.rules_skipped.push(`${rule.material_sku} [${mfrName}]: ${reason}`);
+          result.rules_skipped_details.push({
+            rule_id: rule.rule_id,
+            rule_name: rule.rule_name,
+            material_sku: rule.material_sku,
+            reason,
+            manufacturer: mfrName,
+          });
           // Special logging for config_toggle suppression
           if (reason.includes('config_toggle')) {
             console.log(`🔕 Rule ${rule.rule_id}: ${rule.rule_name} [${mfrName}] — SUPPRESSED by toggle: ${rule.trigger_condition?.config_toggle}`);

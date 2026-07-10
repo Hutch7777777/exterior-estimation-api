@@ -178,6 +178,7 @@ router.post('/siding-estimator', async (req: Request, res: Response) => {
           measurement_source: result.metadata.measurement_source,
           rules_evaluated: result.metadata.rules_evaluated,
           rules_triggered: result.metadata.rules_triggered,
+          rules_skipped: result.metadata.rules_skipped,
           // V2 Mike Skjei calculation metadata
           calculation_method: result.metadata.calculation_method,
           markup_rate: result.metadata.markup_rate,
@@ -230,7 +231,7 @@ router.post('/siding-estimator', async (req: Request, res: Response) => {
 
     res.status(500).json({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error occurred',
+      error: 'Calculation failed',
       error_code: 'CALCULATION_ERROR',
       project_id: req.body?.project_id,
       timestamp: new Date().toISOString()
@@ -374,6 +375,7 @@ router.post('/calculate-siding', async (req: Request, res: Response) => {
           measurement_source: result.metadata.measurement_source,
           rules_evaluated: result.metadata.rules_evaluated,
           rules_triggered: result.metadata.rules_triggered,
+          rules_skipped: result.metadata.rules_skipped,
           // V2 Mike Skjei calculation metadata
           calculation_method: result.metadata.calculation_method,
           markup_rate: result.metadata.markup_rate,
@@ -417,7 +419,7 @@ router.post('/calculate-siding', async (req: Request, res: Response) => {
 
     res.status(500).json({
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error occurred',
+      error: 'Calculation failed',
       error_code: 'CALCULATION_ERROR',
       project_id: req.body?.project_id,
       timestamp: new Date().toISOString()
@@ -492,7 +494,7 @@ router.post('/test', async (req: Request, res: Response) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      error: error instanceof Error ? error.message : 'Test failed',
+      error: 'Test failed',
       timestamp: new Date().toISOString()
     });
   }

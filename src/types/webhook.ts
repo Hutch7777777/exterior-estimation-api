@@ -366,6 +366,23 @@ export interface WebhookProjectTotals {
 // WEBHOOK RESPONSE
 // ============================================================================
 
+/**
+ * Structured calculation warning surfaced in metadata.warnings.
+ * Base shape is { code, message } (e.g. PRICING_NOT_FOUND); optional fields
+ * carry structured context for specific warning codes:
+ * - AUTO_SCOPE_RULE_SKIPPED  → rule_id, rule_name, reason
+ * - DETECTION_CLASS_UNPRICED → detection_class, detection_count
+ */
+export interface CalculationWarning {
+  code: string;
+  message: string;
+  rule_id?: number;
+  rule_name?: string;
+  reason?: string;
+  detection_class?: string;
+  detection_count?: number;
+}
+
 export interface WebhookResponse {
   success: boolean;
   trade: 'siding';
@@ -393,7 +410,7 @@ export interface WebhookResponse {
     pricing_snapshot?: string;
     skus_found: number;
     skus_missing: string[];
-    warnings: Array<{ code: string; message: string }>;
+    warnings: CalculationWarning[];
 
     // V2 specific metadata (auto-scope)
     assigned_items_count?: number;
@@ -401,6 +418,8 @@ export interface WebhookResponse {
     measurement_source?: 'database' | 'webhook' | 'fallback';
     rules_evaluated?: number;
     rules_triggered?: number;
+    /** Human-readable skip reason per evaluated-but-not-triggered rule */
+    rules_skipped?: string[];
 
     // V2 Mike Skjei metadata
     calculation_method?: string;      // 'mike_skjei_v1'

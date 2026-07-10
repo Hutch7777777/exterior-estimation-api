@@ -13,6 +13,9 @@ export interface MeasurementContext {
   gross_wall_area_sqft: number;
   net_siding_area_sqft: number;
 
+  /** Resolved waste multiplier exposed to database quantity formulas. */
+  waste_factor?: number;
+
   // Windows
   window_count: number;
   window_area_sqft: number;
@@ -182,11 +185,29 @@ export interface AutoScopeLineItem {
 // V2 RESULT TYPES
 // ============================================================================
 
+/**
+ * Structured detail for a skipped auto-scope rule.
+ * Parallels the human-readable rules_skipped strings so skip reasons
+ * (especially formula evaluation errors) can be surfaced in API responses.
+ */
+export interface AutoScopeSkippedRule {
+  rule_id: number;
+  rule_name: string;
+  material_sku: string;
+  reason: string;
+  /** Manufacturer scope, when the rule was evaluated per-manufacturer */
+  manufacturer?: string;
+  /** True when the skip was caused by a quantity_formula evaluation error */
+  formula_error?: boolean;
+}
+
 export interface AutoScopeV2Result {
   line_items: AutoScopeLineItem[];
   rules_evaluated: number;
   rules_triggered: number;
   rules_skipped: string[];
+  /** Structured skip details (additive; mirrors rules_skipped) */
+  rules_skipped_details: AutoScopeSkippedRule[];
   measurement_source: 'database' | 'webhook' | 'fallback';
 }
 
@@ -216,6 +237,8 @@ export interface AssignedMaterial {
 export interface AutoScopeV2Options {
   /** Skip siding panel rules if user has siding material assignments */
   skipSidingPanels?: boolean;
+  /** Resolved project/org waste multiplier injected into quantity formulas. */
+  wasteFactor?: number;
   /** Manufacturer groups for per-manufacturer rule application */
   manufacturerGroups?: ManufacturerGroups;
   /** Assigned materials for material_category/sku_pattern trigger conditions */

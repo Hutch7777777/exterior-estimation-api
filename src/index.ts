@@ -5,13 +5,29 @@ import sidingRoutes from './routes/siding';
 import webhookRoutes from './routes/webhook';
 import spatialRoutes from './routes/spatial';
 import { isDatabaseConfigured, testConnection } from './services/database';
+import {
+  createInboundAuth,
+  resolveInboundAuthConfig,
+} from './middleware/inboundAuth';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const inboundAuthConfig = resolveInboundAuthConfig();
+
+if (!inboundAuthConfig.apiKey) {
+  const level = inboundAuthConfig.requireApiKey ? 'ERROR' : 'WARNING';
+  console.log(
+    `[Auth] ${level}: ESTIMATION_API_KEY is not configured` +
+    (inboundAuthConfig.requireApiKey
+      ? '; non-health requests will fail closed.'
+      : '; local non-health requests are unauthenticated.'),
+  );
+}
 
 app.use(cors());
+app.use(createInboundAuth(inboundAuthConfig));
 app.use(express.json({ limit: '10mb' })); // Increase limit for HOVER data
 
 // Health check
